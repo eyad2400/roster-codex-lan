@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>تطبيق خدمات الإدارة العامة للمساعدات الفنية</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="splashScreen" class="splash-screen">
+   <div class="splash-logo">
+      <img id="splashLogoImg" alt="logo" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+    </div>
+    <div class="splash-hero" aria-hidden="true">
+      <svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="splashHeroGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#facc15"/>
+            <stop offset="50%" stop-color="#60a5fa"/>
+            <stop offset="100%" stop-color="#1e40af"/>
+          </linearGradient>
+        </defs>
+        <circle cx="160" cy="110" r="46" fill="url(#splashHeroGrad)"/>
+        <path d="M60 280c8-58 60-96 100-96h0c40 0 92 38 100 96" fill="url(#splashHeroGrad)"/>
+        <path d="M106 165h108l-12 24H118z" fill="#0f172a" opacity="0.35"/>
+      </svg>
+    </div>
+    <div class="splash-title">مرحباً بك في نظام الإدارة العامة للمساعدات الفنية</div>
+    <div class="splash-subtitle">يتم الآن تجهيز لوحة العمل...</div>
+    <div class="splash-progress" aria-hidden="true">
+      <div class="splash-progress-bar" id="splashProgressBar"></div>
+    </div>
+    <div class="splash-progress-label" id="splashProgressLabel">جارٍ التحضير... 0%</div>
+    <div class="splash-dots">
+      <span class="splash-dot"></span>
+      <span class="splash-dot"></span>
+      <span class="splash-dot"></span>
+    </div>
+  </div>
+  <nav class="navbar fixed-top navbar-dark no-print">
+    <div class="container-fluid d-flex justify-content-between align-items-center">
+      <div>
+        <div class="d-flex align-items-center gap-2">
+          <img id="appLogoImg" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" class="logo logo-anim" alt="logo" style="display:none" onerror="this.style.display='none'">
+          <div>
+            <div class="brand" id="appNameTitle">نظام خدمات الضباط</div>
+            <small id="appSubtitle" class="subtitle"></small>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-outline-light" id="openSettingsBtn" onclick="renderTab('settings')">الإعدادات</button>
+        <div id="currentUserLabel" class="text-white"></div>
+        <button class="btn btn-primary" id="navSignIn" style="display:none;" onclick="renderTab('roster')">دخول</button>
+        <button class="btn btn-warning" id="navSignOut" style="display:none;" onclick="signOut()" title="تسجيل خروج">خروج</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid py-5 mt-5 no-print">
+    <ul class="nav nav-tabs mb-4" id="mainTabs">
+      <li class="nav-item"><button class="nav-link active" data-icon="📅" data-tab="roster" onclick="renderTab('roster')">الخدمات</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="👮" data-tab="officers" onclick="renderTab('officers')">الضباط</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🎖️" data-tab="ranks" onclick="renderTab('ranks')">الرتب</button></li>
+       <li class="nav-item"><button class="nav-link" data-icon="🏢" data-tab="departments" onclick="renderTab('departments')">الأقسام</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🌐" data-tab="transfer-departments" onclick="renderTab('transfer-departments')">جهات خارجية</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🪪" data-tab="jobtitles" onclick="renderTab('jobtitles')">المسميات الوظيفية</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🗂️" data-tab="duties" onclick="renderTab('duties')">أنواع الخدمات</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🚦" data-tab="limits" onclick="renderTab('limits')">حدود الضباط</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="⚖️" data-tab="exceptions" onclick="renderTab('exceptions')">القواعد</button></li>
+       <li class="nav-item"><button class="nav-link" data-icon="📄" data-tab="report" onclick="renderTab('report')">التقرير</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="📊" data-tab="stats" onclick="renderTab('stats')">إحصاءات/أرشيف</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="👤" data-tab="account" onclick="renderTab('account')">الملف الشخصي</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="🛠️" data-tab="admin" onclick="renderTab('admin')">لوحة التحكم</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="⚙️" data-tab="settings" onclick="renderTab('settings')">الإعدادات</button></li>
+      <li class="nav-item"><button class="nav-link" data-icon="ℹ️" data-tab="about" onclick="renderTab('about')">حول التطبيق</button></li>
+    </ul>
+      <div id="mainContent" class="p-3"></div>
+  </div>
+
+  <div class="toast-container position-fixed top-0 start-50 translate-middle-x pt-3" style="z-index:12000"></div>
+  <footer class="app-footer no-print"><span id="appFooterText">© جميع الحقوق محفوظة</span></footer>
+  <script src="js/app.js" defer></script>
+</body>
+</html>
