@@ -324,6 +324,11 @@
     let remoteSaveQueued = false;
     let remoteLoadAttempted = false;
     let remotePollTimer = null;
+    et remoteSnapshots = [];
+    let remoteSnapshotsLoaded = false;
+    let remoteSnapshotsLoading = false;
+    let remoteSnapshotsError = '';
+    const remoteSnapshotSelections = { admin: '', firstRun: '' };
 
     function getApiBaseUrl(){
       const configured = (SETTINGS.apiBaseUrl || '').trim();
@@ -410,6 +415,142 @@
     const nextUpdatedAt = updatedAt || data?.meta?.updatedAt || null;
       if(nextUpdatedAt){
         setLocalRemoteUpdatedAt(nextUpdatedAt);
+      }
+    }
+    function formatRemoteSnapshotLabel(snapshot){
+      const label = snapshot?.label || snapshot?.id || 'بيانات غير معروفة';
+      if(!snapshot?.updatedAt) return label;
+      try {
+        const formatted = new Date(snapshot.updatedAt).toLocaleString('ar');
+        return `${label} — ${formatted}`;
+      } catch (_) {
+        return label;
+      }
+    }
+    function renderRemoteSnapshotPanelContents(context){
+      if(!isRemoteSyncEnabled()){
+        return `<div class="alert alert-warning mb-2">فعّل المزامنة وحدد خادم API لعرض بيانات الخادم.</div>`;
+      }
+      if(remoteSnapshotsLoading){
+        return `<div class="text-muted">جارٍ تحميل قائمة البيانات...</div>`;
+      }
+      if(remoteSnapshotsError){
+        return `
+          <div class="alert alert-danger mb-2">${escapeHtml(remoteSnapshotsError)}</div>
+          <button class="btn btn-outline-secondary btn-sm" onclick="refreshRemoteSnapshots(true)">إعادة المحاولة</button>
+        `;
+      }
+      if(!remoteSnapshotsLoaded){
+        return `<button class="btn btn-outline-primary btn-sm" onclick="refreshRemoteSnapshots(true)">تحميل قائمة البيانات</button>`;
+      }
+      if(!remoteSnapshots.length){
+        return `
+          <div class="alert alert-info mb-2">لا توجد نسخ بيانات محفوظة على الخادم.</div>
+          <button class="btn btn-outline-secondary btn-sm" onclick="refreshRemoteSnapshots(true)">تحديث القائمة</button>
+        `;
+      }
+      const selectId = context === 'firstRun' ? 'remoteSnapshotSelectFirstRun' : 'remoteSnapshotSelectAdmin';
+      const selected = remoteSnapshotSelections[context] || '';
+      const options = [
+        `<option value="">اختر بيانات للتحميل</option>`,
+        ...remoteSnapshots.map(snapshot=>{
+          const isSelected = snapshot.id === selected ? 'selected' : '';
+          return `<option value="${escapeHtml(snapshot.id)}" ${isSelected}>${escapeHtml(formatRemoteSnapshotLabel(snapshot))}</option>`;
+        })
+      ].join('');
+      return `
+        <div class="row g-2 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label">بيانات الخادم المتاحة</label>
+            <select id="${selectId}" class="form-select" onchange="setRemoteSnapshotSelection('${context}', this.value)">${options}</select>
+          </div>
+          <div class="col-md-4 text-end">
+            <button class="btn btn-success w-100" onclick="loadRemoteSnapshot('${context}')">تحميل البيانات</button>
+          </div>
+        </div>
+        <div class="mt-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="refreshRemoteSnapshots(true)">تحديث القائمة</button>
+        </div>
+      `;
+    }
+    function refreshRemoteSnapshotPanels(){
+      const panels = [
+        { id: 'remoteSnapshotPanelAdmin', context: 'admin' },
+        { id: 'remoteSnapshotPanelFirstRun', context: 'firstRun' }
+      ];
+      panels.forEach(panel=>{
+        const el = document.getElementById(panel.id);
+        if(el){
+          el.innerHTML = renderRemoteSnapshotPanelContents(panel.context);
+        }
+      });
+    }
+    async function refreshRemoteSnapshots(force = false){
+      if(remoteSnapshotsLoading) return;
+      if(!force && remoteSnapshotsLoaded){
+        refreshRemoteSnapshotPanels();
+        return;
+      }
+      if(!isRemoteSyncEnabled()){
+        remoteSnapshotsLoaded = false;
+        remoteSnapshotsLoading = false;
+        remoteSnapshotsError = '';
+        remoteSnapshots = [];
+        refreshRemoteSnapshotPanels();
+        return;
+      }
+      remoteSnapshotsLoading = true;
+      remoteSnapshotsError = '';
+      refreshRemoteSnapshotPanels();
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/data/snapshots`, { headers: { 'Accept': 'application/json' } });
+        if(!res.ok) throw new Error('Failed to fetch snapshots');
+        const payload = await res.json();
+        const list = payload?.snapshots || payload || [];
+        remoteSnapshots = Array.isArray(list) ? list : [];
+      } catch (err){
+        console.warn('Failed to load remote snapshots', err);
+        remoteSnapshots = [];
+        remoteSnapshotsError = 'تعذر تحميل قائمة البيانات من الخادم.';
+      }
+      remoteSnapshotsLoading = false;
+      remoteSnapshotsLoaded = true;
+      refreshRemoteSnapshotPanels();
+    }
+    function setRemoteSnapshotSelection(context, value){
+      remoteSnapshotSelections[context] = value;
+    }
+    async function loadRemoteSnapshot(context){
+      const selected = remoteSnapshotSelections[context];
+      if(!selected){
+        safeShowToast('اختر بيانات للتحميل أولاً', 'warning');
+        return;
+      }
+      if(!isRemoteSyncEnabled()){
+        safeShowToast('المزامنة عبر الخادم غير مفعلة', 'danger');
+        return;
+      }
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/data/snapshots/${encodeURIComponent(selected)}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if(!res.ok){
+          throw new Error(`Snapshot load failed: ${res.status}`);
+        }
+        const payload = await res.json();
+        const data = payload?.data || payload;
+        if(!hasRemoteData(data)){
+          safeShowToast('لا توجد بيانات صالحة في النسخة المختارة', 'warning');
+          return;
+        }
+        applyRemotePayload(data, payload?.updatedAt || payload?.data?.meta?.updatedAt || null);
+        loadAll({ skipRemoteLoad: true });
+        localStorage.setItem(FIRST_RUN_KEY, 'true');
+        safeShowToast('تم تحميل بيانات الخادم بنجاح', 'success');
+        renderTab('roster');
+      } catch (err){
+        console.warn('Failed to load remote snapshot', err);
+        safeShowToast('تعذر تحميل بيانات الخادم', 'danger');
       }
     }
     async function persistImportedData(sourceLabel){
@@ -1002,11 +1143,18 @@ async function forceRemoteUpdate(){
                 <input type="file" class="form-control" accept="application/json" onchange="handleFirstRunRestore(this.files[0])">
                 <button class="btn btn-outline-primary" onclick="this.previousElementSibling?.click()">اختيار ملف النسخة الاحتياطية</button>
               </div>
-          <div class="first-run-option">
+           <div class="first-run-option">
                 <h4>استيراد بيانات التطبيق (ترحيل خادم)</h4>
                 <p>استخدم ملف بيانات المزامنة (مثل rosterStore.json) عند الترحيل بين الخوادم أو تثبيت نظام جديد.</p>
                 <input type="file" class="form-control" accept="application/json" onchange="importAppDataFile(this.files[0])">
                 <button class="btn btn-outline-secondary" onclick="this.previousElementSibling?.click()">اختيار ملف بيانات التطبيق</button>
+              </div>
+               <div class="first-run-option">
+                <h4>تحميل بيانات من الخادم</h4>
+                <p>اختر نسخة بيانات محفوظة على الخادم لبدء العمل مباشرة بدون رفع ملفات.</p>
+                <div id="remoteSnapshotPanelFirstRun">
+                  ${renderRemoteSnapshotPanelContents('firstRun')}
+                </div>
               </div>
             </div>
           </div>
@@ -1016,6 +1164,7 @@ async function forceRemoteUpdate(){
       if(shouldShowFirstRunPrompt()){
         clearActiveTab();
         document.getElementById('mainContent').innerHTML = renderFirstRunPrompt();
+        refreshRemoteSnapshots();
         return;
       }
       if(SETTINGS.authEnabled && !CURRENT_USER){
@@ -1044,6 +1193,9 @@ async function forceRemoteUpdate(){
         case 'admin':
           c.innerHTML = renderAdminTab();
           updatePrivilegeControlState();
+          if(getAdminSubTab() === 'backup'){
+            refreshRemoteSnapshots();
+          }
           break;
         case 'settings': c.innerHTML = renderSettingsTab(); break;
         case 'about': c.innerHTML = renderAboutTab(); break;
@@ -1983,6 +2135,15 @@ async function forceRemoteUpdate(){
                 <button class="btn btn-outline-secondary mb-2" onclick="adminRestoreDefaults()">استعادة إعدادات الطباعة والشعار الافتراضية</button><br/>
                 <button class="btn btn-outline-danger" onclick="adminClearAllRosters()">حذف كل الجداول المخزنة</button>
                 <button class="btn btn-outline-primary mt-2" onclick="exportArchive()">تصدير الأرشيف</button>
+              </div>
+            </div>
+            <div class="col-md-12">
+              <div class="border rounded p-3 h-100 mt-3">
+                <h6>تحميل بيانات من الخادم</h6>
+                <p class="small text-muted">اختر نسخة بيانات محفوظة على الخادم لتحميلها لهذا الجهاز.</p>
+                <div id="remoteSnapshotPanelAdmin">
+                  ${renderRemoteSnapshotPanelContents('admin')}
+                </div>
               </div>
             </div>
           </div>
