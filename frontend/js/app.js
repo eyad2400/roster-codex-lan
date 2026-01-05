@@ -531,7 +531,20 @@
         }
       }
     }
-
+async function forceRemoteUpdate(){
+      if(!isRemoteSyncEnabled()){
+        showToast('ميزة المزامنة عبر الشبكة غير مفعلة','warning');
+        return;
+      }
+      if(currentRole() !== 'admin'){
+        showToast('صلاحية غير كافية لتحديث الأجهزة','danger');
+        return;
+      }
+      if(!confirm('سيتم إرسال تحديث البيانات إلى كل الأجهزة المتصلة بالشبكة المحلية. متابعة؟')) return;
+      await sendRemoteSave();
+      logActivity('تحديث بيانات الأجهزة عبر الشبكة', {});
+      showToast('تم إرسال تحديث البيانات للأجهزة المتصلة','success');
+    }
     function loadAll(options = {}){
       try { officers = JSON.parse(localStorage.getItem('officers')) || []; } catch(_) { officers = []; }
       try { officerLimits = JSON.parse(localStorage.getItem('officerLimits')) || {}; } catch(_) { officerLimits = {}; }
@@ -1955,7 +1968,11 @@
                 <p class="small text-muted">استخدم هذه الخيارات بحذر، قد تفقد البيانات المحلية.</p>
                 <button class="btn btn-warning mb-2" onclick="clearSessionOnly()">مسح جلسة المستخدم الحالي</button><br/>
                 <button class="btn btn-outline-danger" onclick="resetAllData()">تفريغ كل البيانات وإعادتها للوضع الافتراضي</button>
-              </div>
+                 <hr/>
+                <h6>تحديث بيانات الأجهزة على الشبكة</h6>
+                <p class="small text-muted">يجبر كل الأجهزة المتصلة على تحميل أحدث نسخة من البيانات عبر المزامنة.</p>
+                <button class="btn btn-outline-primary" onclick="forceRemoteUpdate()">إرسال تحديث الآن</button>
+               </div>
             </div>
             <div class="col-md-12">
               <div class="border rounded p-3 h-100 mt-3">
