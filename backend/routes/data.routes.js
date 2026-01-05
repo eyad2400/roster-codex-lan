@@ -1,7 +1,35 @@
-const express = require('express');
-
-const { readStore, writeStore, hasData, ensureDataFilesFromStore } = require('../services/dataStore');
+const {
+  readStore,
+  writeStore,
+  hasData,
+  ensureDataFilesFromStore,
+  listSnapshotSummaries,
+  readSnapshotById,
+} = require('../services/dataStore');
 const router = express.Router();
+
+router.get('/snapshots', async (_req, res) => {
+  try {
+    const snapshots = await listSnapshotSummaries();
+    res.json({ snapshots });
+  } catch (error) {
+    console.error('Failed to list roster snapshots', error);
+    res.status(500).json({ error: 'Failed to list roster snapshots.' });
+  }
+});
+
+router.get('/snapshots/:id', async (req, res) => {
+  try {
+    const snapshot = await readSnapshotById(req.params.id);
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Snapshot not found.' });
+    }
+    return res.json(snapshot);
+  } catch (error) {
+    console.error('Failed to read roster snapshot', error);
+    return res.status(500).json({ error: 'Failed to read roster snapshot.' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
