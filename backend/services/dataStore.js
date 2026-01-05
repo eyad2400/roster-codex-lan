@@ -4,12 +4,11 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const STORE_PATH = path.join(DATA_DIR, 'rosterStore.json');
 const DATA_FILES_DIR = path.join(DATA_DIR, 'roster');
-router.get('/', async (req, res) => {
-  try {
-    const store = await readStore();
-    await ensureDataFilesFromStore(store);
-    res.json(store);
-  } catch (error) {
+const DEFAULT_BACKUP_FILES = [
+  path.join(DATA_DIR, 'roster_backup_2026-01-03.json'),
+  path.join(__dirname, '..', '..', 'roster_backup_2026-01-03.json'),
+];
+
 const DATA_FILE_MAP = {
   officers: 'officers.json',
   officerLimits: 'officerLimits.json',
@@ -26,6 +25,7 @@ const DATA_FILE_MAP = {
   officerLimitFilters: 'officerLimitFilters.json',
   meta: 'meta.json',
 };
+
 const DEFAULT_DATA = {
   officers: [],
   officerLimits: {},
@@ -106,7 +106,7 @@ async function readStore() {
       return { data: {}, updatedAt: null };
     }
     throw error;
- }
+  }
 }
 
 async function readJsonFile(filePath, fallback) {
@@ -197,7 +197,8 @@ async function ingestBackupFileIfPresent() {
   }
   const payload = value.data && typeof value.data === 'object' ? value.data : value;
   if (!hasData(payload)) {
-    return null;  }
+    return null;
+  }
   const updatedAt = value.updatedAt || payload?.meta?.updatedAt || new Date().toISOString();
   const store = { data: payload, updatedAt };
   await writeStore(store);
@@ -224,6 +225,7 @@ async function ensureDataFilesFromStore(store) {
     await writeDataFiles(data, updatedAt);
   }
 }
+
 async function isStoreEmpty() {
   const store = await readStore();
   const data = store?.data ?? store;
