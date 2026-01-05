@@ -224,8 +224,11 @@
         return false;
       }
       if(hasStoredRosterData()){
-        showToast('البيانات الحالية غير فارغة. يجب مسح كل البيانات قبل الاستيراد.', 'warning');
-        return false;
+        const confirmOverwrite = confirm('سيتم استبدال جميع البيانات الحالية بالنسخة الاحتياطية. يوصى بتنزيل نسخة احتياطية قبل المتابعة. هل تريد الاستمرار؟');
+        if(!confirmOverwrite){
+          showToast('تم إلغاء الاستيراد', 'info');
+          return false;
+        }
       }
       return true;
     }
