@@ -1,11 +1,12 @@
 const express = require('express');
 
-const { readStore, writeStore, hasData } = require('../services/dataStore');
+const { readStore, writeStore, hasData, ensureDataFilesFromStore } = require('../services/dataStore');
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
     const store = await readStore();
+    await ensureDataFilesFromStore(store);
     res.json(store);
   } catch (error) {
     console.error('Failed to read roster store', error);
