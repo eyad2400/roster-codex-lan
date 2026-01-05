@@ -36,6 +36,10 @@
     let SELECTED_OFFICER_ID = null;
     let supportRequests = [];
     const FIRST_RUN_KEY = 'rosterFirstRunDone';
+    const LOGIN_LOCK_KEY = 'authLoginLock';
+    const MAX_LOGIN_ATTEMPTS = 5;
+    const LOGIN_LOCK_WINDOW_MS = 10 * 60 * 1000;
+    const LOGIN_LOCK_DURATION_MS = 5 * 60 * 1000;
     const OFFICER_RANDOMNESS = {};
     const dutyCollapseState = {};
     const dutySwapState = {};
@@ -189,6 +193,21 @@
         hasObject(storedArchivedRoster)
       );
     }
+    function isAdminUser(){
+      if(!SETTINGS.authEnabled) return true;
+      return !!CURRENT_USER && CURRENT_USER.role === 'admin';
+    }
+    function ensureBackupImportAllowed(){
+      if(!isAdminUser()){
+        showToast('يتطلب الاستيراد حساب مدير', 'danger');
+        return false;
+      }
+      if(hasStoredRosterData()){
+        showToast('البيانات الحالية غير فارغة. يجب مسح كل البيانات قبل الاستيراد.', 'warning');
+        return false;
+      }
+      return true;
+    }
     function shouldShowFirstRunPrompt(){
       if(localStorage.getItem(FIRST_RUN_KEY) === 'true') return false;
       if(SETTINGS.authEnabled){
@@ -205,6 +224,7 @@
     }
     function handleFirstRunRestore(file){
       if(!file) return;
+      if(!ensureBackupImportAllowed()) return;
       importFullBackup(file, {
         onComplete: () => {
           localStorage.setItem(FIRST_RUN_KEY, 'true');
@@ -221,6 +241,7 @@
     }
     function importAppDataFile(file, options = {}){
       if(!file) return;
+      if(!ensureBackupImportAllowed()) return;
       const onComplete = typeof options.onComplete === 'function' ? options.onComplete : null;
       const targetTab = options.targetTab || 'admin';
       const reader = new FileReader();
@@ -234,6 +255,7 @@
           CURRENT_USER = null;
           loadAll({ skipRemoteLoad: true });
           saveAll();
+          persistImportedData('app-data-file');
           if(onComplete){
             onComplete();
           } else {
@@ -357,6 +379,41 @@
     const nextUpdatedAt = updatedAt || data?.meta?.updatedAt || null;
       if(nextUpdatedAt){
         setLocalRemoteUpdatedAt(nextUpdatedAt);
+      }
+    }
+    async function persistImportedData(sourceLabel){
+      const baseUrl = getApiBaseUrl();
+      if(!baseUrl) return;
+      const payload = buildRemotePayload();
+      if(!hasRemoteData(payload)) return;
+      try {
+        const res = await fetch(`${baseUrl}/api/data/import`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Admin-Import': 'true'
+          },
+          body: JSON.stringify({
+            data: payload,
+            meta: {
+              source: sourceLabel || 'backup',
+              importedAt: new Date().toISOString(),
+              requestedBy: CURRENT_USER ? CURRENT_USER.name : 'system',
+              requestedByRole: CURRENT_USER ? CURRENT_USER.role : 'system'
+            }
+          })
+        });
+        if(!res.ok){
+          console.warn('Remote import refused', res.status);
+          return;
+        }
+        const store = await res.json();
+        const updatedAt = getRemoteUpdatedAtFromPayload(store);
+        if(updatedAt){
+          setLocalRemoteUpdatedAt(updatedAt);
+        }
+      } catch (err){
+        console.warn('Remote import failed', err);
       }
     }
     function requestRemoteLoad(){
@@ -716,6 +773,39 @@
       if(pwd.length >= 12) score++;
       return Math.min(score, 4);
     }
+    function getLoginLockState(){
+      const state = safeLoadFromStorage(LOGIN_LOCK_KEY, { count: 0, lastAttemptAt: 0, lockedUntil: 0 });
+      if(!state || typeof state !== 'object') return { count: 0, lastAttemptAt: 0, lockedUntil: 0 };
+      return {
+        count: Number(state.count) || 0,
+        lastAttemptAt: Number(state.lastAttemptAt) || 0,
+        lockedUntil: Number(state.lockedUntil) || 0
+      };
+    }
+    function saveLoginLockState(state){
+      localStorage.setItem(LOGIN_LOCK_KEY, JSON.stringify(state));
+    }
+    function isLoginLocked(){
+      const state = getLoginLockState();
+      if(!state.lockedUntil) return false;
+      if(Date.now() >= state.lockedUntil){
+        saveLoginLockState({ count: 0, lastAttemptAt: 0, lockedUntil: 0 });
+        return false;
+      }
+      return true;
+    }
+    function recordFailedLogin(){
+      const now = Date.now();
+      const state = getLoginLockState();
+      const withinWindow = state.lastAttemptAt && (now - state.lastAttemptAt) < LOGIN_LOCK_WINDOW_MS;
+      const nextCount = withinWindow ? state.count + 1 : 1;
+      const lockedUntil = nextCount >= MAX_LOGIN_ATTEMPTS ? now + LOGIN_LOCK_DURATION_MS : 0;
+      saveLoginLockState({ count: nextCount, lastAttemptAt: now, lockedUntil });
+      return { count: nextCount, lockedUntil };
+    }
+    function clearLoginFailures(){
+      saveLoginLockState({ count: 0, lastAttemptAt: 0, lockedUntil: 0 });
+    }
     function updateStrengthBar(pwd, holderId){
       const el = document.getElementById(holderId);
       if(!el) return;
@@ -1039,9 +1129,27 @@
     function performLoginInline(){
       const name = document.getElementById('login_name_inline').value.trim();
       const pwd = document.getElementById('login_pwd_inline').value;
+      if(isLoginLocked()){
+        const state = getLoginLockState();
+        const remainingMs = Math.max(0, state.lockedUntil - Date.now());
+        const remainingMin = Math.ceil(remainingMs / 60000);
+        document.getElementById('loginInlineMsg').textContent = `تم إيقاف المحاولة مؤقتاً. حاول بعد ${remainingMin} دقيقة.`;
+        return;
+      }
       const u = (SETTINGS.users || []).find(x=>x.name===name && x.pwd===pwd);
-      if(!u){ document.getElementById('loginInlineMsg').textContent = 'بيانات غير صحيحة'; return; }
+      if(!u){
+        const lockState = recordFailedLogin();
+        if(lockState.lockedUntil){
+          const remainingMin = Math.ceil((lockState.lockedUntil - Date.now()) / 60000);
+          document.getElementById('loginInlineMsg').textContent = `محاولات كثيرة. تم الإيقاف لمدة ${remainingMin} دقيقة.`;
+        } else {
+          const remaining = Math.max(0, MAX_LOGIN_ATTEMPTS - lockState.count);
+          document.getElementById('loginInlineMsg').textContent = `بيانات غير صحيحة. تبقى ${remaining} محاولة.`;
+        }
+        return;
+      }
        CURRENT_USER = {name:u.name, fullName: u.fullName || u.name || '', role:u.role, officerId:u.officerId||null, tabPrivileges: Array.isArray(u.tabPrivileges) ? u.tabPrivileges : [], mustChangePassword: !!u.mustChangePassword};
+      clearLoginFailures();
       u.lastLoginAt = new Date().toISOString();
       sessionStorage.setItem('currentUser', JSON.stringify(CURRENT_USER));
       ACTIVE_SESSIONS = ACTIVE_SESSIONS.filter(s=>!(s.name===u.name && s.role===u.role));
@@ -1109,7 +1217,7 @@
       const hintVal = (document.getElementById('admin_recover_hint')?.value || '').trim().toLowerCase();
       const newPwd = document.getElementById('admin_recover_newpwd')?.value || '';
       if(!hintVal) return showToast('أدخل المعلومة المطلوبة','danger');
-      if(!newPwd || newPwd.length < 4) return showToast('أدخل كلمة مرور جديدة صالحة','danger');
+      if(!newPwd || passwordStrengthScore(newPwd) < 2) return showToast('أدخل كلمة مرور جديدة قوية','danger');
       const expected = (context?.expected || '').toString().trim().toLowerCase();
       if(expected){
         const match = expected.includes(hintVal) || hintVal.includes(expected);
@@ -1976,6 +2084,7 @@
     }
      function importFullBackup(file, options = {}){
       if(!file) return;
+      if(!ensureBackupImportAllowed()) return;
       const onComplete = typeof options.onComplete === 'function' ? options.onComplete : null;
       const targetTab = options.targetTab || 'admin';
       const reader = new FileReader();
@@ -1993,6 +2102,7 @@
           CURRENT_USER = null;
           saveAll();
           loadAll();
+          persistImportedData('full-backup');
           if(onComplete){
             onComplete();
           } else {
@@ -2101,6 +2211,7 @@
       const phone=document.getElementById('admin_user_phone').value;
       const note=document.getElementById('admin_user_note').value;
       if(!name||!pwd) return showToast('ادخل اسم وكلمة مرور','danger');
+      if(passwordStrengthScore(pwd) < 2) return showToast('كلمة المرور ضعيفة. اختر كلمة مرور أقوى','danger');
       SETTINGS.users=SETTINGS.users||[];
       const editIdx = document.getElementById('admin_user_name').dataset.editIndex;
       const existing = (SETTINGS.users||[])[editIdx] || {};
@@ -2133,6 +2244,7 @@
       const u = (SETTINGS.users||[])[idx]; if(!u) return;
       const temp = prompt('أدخل كلمة مرور مؤقتة (سيُطلب تغييرها عند أول دخول):', generateTempPassword());
       if(!temp) return;
+      if(passwordStrengthScore(temp) < 2) return showToast('كلمة المرور ضعيفة. اختر كلمة مرور أقوى','danger');
       u.pwd = temp;
       u.mustChangePassword = true;
       saveAll();
