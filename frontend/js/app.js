@@ -362,6 +362,7 @@
     function requestRemoteLoad(){
       if(!isRemoteSyncEnabled() || remoteLoadAttempted) return;
       remoteLoadAttempted = true;
+      const wasEmpty = !hasStoredRosterData();
       fetch(`${getApiBaseUrl()}/api/data`, { headers: { 'Accept': 'application/json' } })
         .then(res => res.ok ? res.json() : null)
         .then(payload=>{
@@ -369,6 +370,9 @@
           const data = payload.data || payload;
           if(!hasRemoteData(data)) return;
           const updatedAt = getRemoteUpdatedAtFromPayload(payload);
+          if(wasEmpty){
+            localStorage.setItem(FIRST_RUN_KEY, 'true');
+          }
           applyRemotePayload(data, updatedAt);
           loadAll({ skipRemoteLoad: true });
           if(splashCompleted){
@@ -770,10 +774,12 @@
      // Offline fallbacks for missing libs
     // Lightweight html2canvas alternative using SVG foreignObject to avoid external dependencies
     if (typeof window.html2canvas === 'undefined') {
-      window.html2canvas = function(element, opts={}){
+        window.__html2canvasFallback = true;
+        window.html2canvas = function(element, opts={}){
         return new Promise((resolve, reject) => {
           try{
             const scale = opts.scale || 1;
+            const backgroundColor = opts.backgroundColor || '#fff';
             const rect = element.getBoundingClientRect();
             const width = Math.max(element.scrollWidth || rect.width, rect.width);
             const height = Math.max(element.scrollHeight || rect.height, rect.height);
@@ -787,6 +793,10 @@
               canvas.width = width * scale;
               canvas.height = height * scale;
               const ctx = canvas.getContext('2d');
+               if(backgroundColor){
+                ctx.fillStyle = backgroundColor;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+              }
               ctx.scale(scale, scale);
               ctx.drawImage(img, 0, 0, width, height);
               resolve(canvas);
@@ -2831,14 +2841,38 @@
       };
       iframe.srcdoc = html;
     }
+    function getHtml2CanvasOptions(overrides = {}){
+      return Object.assign({ scale: 2, useCORS: true, backgroundColor: '#fff' }, overrides);
+    }
     async function ensureHtml2CanvasReady(){
-      if(typeof html2canvas === 'function') return true;
+      if(typeof html2canvas === 'function' && !window.__html2canvasFallback) return true;
       return new Promise((resolve, reject)=>{
         const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
-        s.onload = ()=> resolve(true);
-        s.onerror = ()=> { safeShowToast('تعذر تحميل مكتبة PDF','danger'); reject(new Error('html2canvas load failed')); };
+       const baseUrl = getApiBaseUrl();
+        const sources = [];
+        if(baseUrl) sources.push(`${baseUrl}/vendor/html2canvas.min.js`);
+        sources.push('/vendor/html2canvas.min.js');
+        sources.push('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
+        let idx = 0;
+        const loadNext = () => {
+          if(idx >= sources.length){
+            if(typeof html2canvas === 'function'){
+              resolve(true);
+              return;
+            }
+            safeShowToast('تعذر تحميل مكتبة PDF','danger');
+            reject(new Error('html2canvas load failed'));
+            return;
+          }
+          s.src = sources[idx++];
+        };
+        s.onload = () => {
+          window.__html2canvasFallback = false;
+          resolve(true);
+        };
+        s.onerror = loadNext;
         document.head.appendChild(s);
+        loadNext();
       });
     }
     function buildReportCanvasHtml(ids, month){
@@ -2857,7 +2891,7 @@
       document.body.appendChild(container);
       try{
         await ensureHtml2CanvasReady();
-        const canvas = await html2canvas(container, {scale:2, useCORS:true});
+        const canvas = await html2canvas(container, getHtml2CanvasOptions());
         const blob = buildPdfBlobFromCanvas(canvas);
         const url = URL.createObjectURL(blob);
         const win = window.open(url, '_blank');
@@ -2886,13 +2920,23 @@
       if(!duty){ safeShowToast('تعذر العثور على نوع الخدمة للطباعة','danger'); return; }
       printReportPdfStyle([dutyId], month, `${duty.name}_${month}.pdf`);
     }
-    function exportDutyPDF(dutyId){
+    async function exportDutyPDF(dutyId){
       const month = document.getElementById('rosterMonth')?.value || sessionStorage.getItem('activeRosterMonth') || new Date().toISOString().slice(0,7);
       const html = buildDutyInnerHtml(dutyId, month);
       const container = document.createElement('div');
       container.style.width = '210mm'; container.style.padding = '6mm'; container.style.direction = 'rtl'; container.innerHTML = html;
       document.body.appendChild(container);
-      html2canvas(container, {scale:2, useCORS:true}).then(canvas => canvasToPdf(canvas, `${duties.find(d=>d.id===dutyId).name}_${month}.pdf`).then(()=>{ safeShowToast('تم تنزيل PDF','success'); container.remove(); })).catch(e=>{ safeShowToast('فشل إنشاء PDF','danger'); console.error(e); container.remove(); });
+       try{
+        await ensureHtml2CanvasReady();
+        const canvas = await html2canvas(container, getHtml2CanvasOptions());
+        await canvasToPdf(canvas, `${duties.find(d=>d.id===dutyId).name}_${month}.pdf`);
+        safeShowToast('تم تنزيل PDF','success');
+      }catch(e){
+        safeShowToast('فشل إنشاء PDF','danger');
+        console.error(e);
+      }finally{
+        container.remove();
+      }
     }
 
     function saveRosterAndExport(){
@@ -2941,7 +2985,8 @@
       container.innerHTML = ids.map(id=> buildDutyInnerHtml(id, month)).join('<div style="page-break-after:always;"></div>');
       document.body.appendChild(container);
       try{
-        const canvas = await html2canvas(container, {scale:2, useCORS:true});
+        await ensureHtml2CanvasReady();
+        const canvas = await html2canvas(container, getHtml2CanvasOptions());
         await canvasToPdf(canvas, `Roster_${month}.pdf`);
         showToast('تم إنشاء PDF وتنزيله','success');
       }catch(e){ console.error(e); showToast('فشل إنشاء PDF','danger'); }
@@ -2955,7 +3000,8 @@
       container.innerHTML = ids.map(id=> buildDutyInnerHtml(id, month)).join('<div style="page-break-after:always;"></div>');
       document.body.appendChild(container);
       try{
-        const canvas = await html2canvas(container, {scale:2, useCORS:true});
+         await ensureHtml2CanvasReady();
+        const canvas = await html2canvas(container, getHtml2CanvasOptions());
         await canvasToPdf(canvas, `Roster_All_${month}.pdf`);
         showToast('تم إنشاء PDF وتنزيله','success');
       }catch(e){ console.error(e); showToast('فشل إنشاء PDF','danger'); }
@@ -4213,7 +4259,7 @@
         document.body.appendChild(container);
         try{
           await ensureHtml2CanvasReady();
-          const canvas = await html2canvas(container, {scale:2, useCORS:true});
+          const canvas = await html2canvas(container, getHtml2CanvasOptions());
           const mime = format === 'png' ? 'image/png' : 'image/jpeg';
           const dataUrl = canvas.toDataURL(mime, 0.95);
           const link = document.createElement('a');
@@ -4662,7 +4708,7 @@
                 <li>تخصيص السمات والخطوط والشعار بما يتناسب مع الهوية المؤسسية.</li>
               </ul>
             </div>
-          </div>
+          </div>s
           <div class="mt-3"><strong>الإصدار:</strong> 1.0 — إصدار تشغيلي موحد</div>
         </div>
       </div>`;
