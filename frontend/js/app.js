@@ -180,8 +180,29 @@
       const storedDuties = safeLoadFromStorage('duties', []);
       const storedExceptions = safeLoadFromStorage('exceptions', []);
       const storedRanks = safeLoadFromStorage('ranks', []);
+      const defaultDepartments = getDefaultDepartments();
+      const defaultJobTitles = getDefaultJobTitles();
+      const defaultDuties = getDefaultDuties();
       const hasList = list => Array.isArray(list) && list.length > 0;
       const hasObject = obj => obj && typeof obj === 'object' && Object.keys(obj).length > 0;
+      const isSameList = (list, defaults) => {
+        if(!Array.isArray(list) || !Array.isArray(defaults)) return false;
+        if(list.length !== defaults.length) return false;
+        return list.every((item, idx) => JSON.stringify(item) === JSON.stringify(defaults[idx]));
+      };
+      const isDefaultSeedOnly = (
+        !hasList(storedOfficers) &&
+        !hasList(storedExceptions) &&
+        !hasObject(storedRoster) &&
+        !hasObject(storedArchivedRoster) &&
+        isSameList(storedDepartments, defaultDepartments) &&
+        isSameList(storedJobTitles, defaultJobTitles) &&
+        isSameList(storedDuties, defaultDuties) &&
+        isSameList(storedRanks, defaultRanks)
+      );
+      if(isDefaultSeedOnly){
+        return false;
+      }
       return (
         hasList(storedOfficers) ||
         hasList(storedDepartments) ||
@@ -277,7 +298,14 @@
         {id:4,name:"ليلية",printLabel:"ليلية",color:"dark",duration:10,restHours:38,allowedRanks:[],signingJobTitleIds:[]}
       ];
     }
-
+   
+    function getDefaultJobTitles(){
+      return [
+        {id:1,name:"قائد الوحدة",parentId:null,isUpper:true},
+        {id:2,name:"رئيس قسم الشئون الإدارية",parentId:null,isUpper:false}
+      ];
+    }
+  
    function getDefaultDepartments(){
       return [
         {id:1,name:"الإدارة العامة للمساعدات الفنية",parentId:null,headId:null,upperTitle:'',upperOfficerId:null,groupKey:'internal'},
@@ -505,7 +533,7 @@
       try { officers = JSON.parse(localStorage.getItem('officers')) || []; } catch(_) { officers = []; }
       try { officerLimits = JSON.parse(localStorage.getItem('officerLimits')) || {}; } catch(_) { officerLimits = {}; }
       try { departments = JSON.parse(localStorage.getItem('departments')) || getDefaultDepartments(); } catch(_) { departments = getDefaultDepartments(); }
-      try { jobTitles = JSON.parse(localStorage.getItem('jobTitles')) || [{id:1,name:"قائد الوحدة",parentId:null,isUpper:true},{id:2,name:"رئيس قسم الشئون الإدارية",parentId:null,isUpper:false}]; } catch(_) { jobTitles = [{id:1,name:"قائد الوحدة",parentId:null,isUpper:true},{id:2,name:"رئيس قسم الشئون الإدارية",parentId:null,isUpper:false}]; }
+      try { jobTitles = JSON.parse(localStorage.getItem('jobTitles')) || getDefaultJobTitles(); } catch(_) { jobTitles = getDefaultJobTitles(); }
       try { duties = JSON.parse(localStorage.getItem('duties')) || getDefaultDuties(); } catch(_) { duties = getDefaultDuties(); }
       try { roster = JSON.parse(localStorage.getItem('roster')) || {}; } catch(_) { roster = {}; }
       try { archivedRoster = JSON.parse(localStorage.getItem('archivedRoster')) || {}; } catch(_) { archivedRoster = {}; }
@@ -2312,7 +2340,7 @@
       sessionStorage.clear();
       officers = [];
       departments = getDefaultDepartments();
-      jobTitles = [{id:1,name:"قائد الوحدة",parentId:null,isUpper:true},{id:2,name:"رئيس قسم الشئون الإدارية",parentId:null,isUpper:false}];
+      jobTitles = getDefaultJobTitles();
       duties = getDefaultDuties();
       roster = {};
       exceptions = [];
