@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 
@@ -31,6 +32,9 @@ app.get('/health', (req, res) => {
    ========================= */
 // app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/data', require('./routes/data.routes'));
+app.get('/vendor/html2canvas.min.js', (req, res) => {
+  res.sendFile(path.join(__dirname, 'vendor', 'html2canvas.min.js'));
+});
 
 /* =========================
    Server start
