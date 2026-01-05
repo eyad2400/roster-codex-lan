@@ -1,7 +1,41 @@
 const fs = require('fs/promises');
 const path = require('path');
 
-const STORE_PATH = path.join(__dirname, '..', 'data', 'rosterStore.json');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const STORE_PATH = path.join(DATA_DIR, 'rosterStore.json');
+const DATA_FILES_DIR = path.join(DATA_DIR, 'roster');
+const DEFAULT_BACKUP_FILE = path.join(DATA_DIR, 'roster_backup_2026-01-03.json');
+const DATA_FILE_MAP = {
+  officers: 'officers.json',
+  officerLimits: 'officerLimits.json',
+  departments: 'departments.json',
+  jobTitles: 'jobTitles.json',
+  duties: 'duties.json',
+  roster: 'roster.json',
+  archivedRoster: 'archivedRoster.json',
+  exceptions: 'exceptions.json',
+  ranks: 'ranks.json',
+  settings: 'settings.json',
+  activityLog: 'activityLog.json',
+  supportRequests: 'supportRequests.json',
+  officerLimitFilters: 'officerLimitFilters.json',
+  meta: 'meta.json',
+};
+const DEFAULT_DATA = {
+  officers: [],
+  officerLimits: {},
+  departments: [],
+  jobTitles: [],
+  duties: [],
+  roster: {},
+  archivedRoster: {},
+  exceptions: [],
+  ranks: [],
+  settings: {},
+  activityLog: [],
+  supportRequests: [],
+  officerLimitFilters: {},
+};
 
 function hasData(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -31,23 +65,120 @@ async function readStore() {
       return { data: {}, updatedAt: null };
     }
     if (!('data' in parsed)) {
+      if (!hasData(parsed)) {
+        const fallback = await readDataFiles();
+        if (hasData(fallback.data)) {
+          return { data: fallback.data, updatedAt: fallback.updatedAt };
+        }
+        const hydrated = await ingestBackupFileIfPresent();
+        if (hydrated) {
+          return hydrated;
+        }
+      }
       return { data: parsed, updatedAt: null };
+    }
+    if (!hasData(parsed.data)) {
+      const fallback = await readDataFiles();
+      if (hasData(fallback.data)) {
+        return { data: fallback.data, updatedAt: fallback.updatedAt };
+      }
+      const hydrated = await ingestBackupFileIfPresent();
+      if (hydrated) {
+        return hydrated;
+      }
     }
     return parsed;
   } catch (error) {
     if (error.code === 'ENOENT') {
+      const fallback = await readDataFiles();
+      if (hasData(fallback.data)) {
+        return { data: fallback.data, updatedAt: fallback.updatedAt };
+      }
+      const hydrated = await ingestBackupFileIfPresent();
+      if (hydrated) {
+        return hydrated;
+      }
       return { data: {}, updatedAt: null };
     }
     throw error;
  }
 }
 
-async function writeStore(payload) {
-  await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
-  await fs.writeFile(STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
-  return payload;
+async function readJsonFile(filePath, fallback) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw || 'null');
+    return { value: parsed ?? fallback, found: true };
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return { value: fallback, found: false };
+    }
+    return { value: fallback, found: false };
+  }
 }
 
+async function readDataFiles() {
+  const data = {};
+  let hasFiles = false;
+  for (const [key, fileName] of Object.entries(DATA_FILE_MAP)) {
+    const filePath = path.join(DATA_FILES_DIR, fileName);
+    const fallback = key === 'meta' ? {} : DEFAULT_DATA[key] ?? null;
+    const { value, found } = await readJsonFile(filePath, fallback);
+    if (found) {
+      hasFiles = true;
+    }
+    if (key === 'meta') {
+      data.meta = value || {};
+    } else {
+      data[key] = value ?? fallback;
+    }
+  }
+  const updatedAt = data.meta?.updatedAt || null;
+  if (!hasFiles) {
+    return { data: {}, updatedAt: null };
+  }
+  return { data, updatedAt };
+}
+
+async function writeDataFiles(payload, updatedAt) {
+  await fs.mkdir(DATA_FILES_DIR, { recursive: true });
+  const meta = Object.assign({}, payload?.meta || {});
+  if (updatedAt) {
+    meta.updatedAt = updatedAt;
+  }
+  const data = Object.assign({}, DEFAULT_DATA, payload || {}, { meta });
+  const writes = [];
+  for (const [key, fileName] of Object.entries(DATA_FILE_MAP)) {
+    const filePath = path.join(DATA_FILES_DIR, fileName);
+    const value = key === 'meta' ? meta : data[key];
+    writes.push(fs.writeFile(filePath, JSON.stringify(value ?? null, null, 2), 'utf-8'));
+  }
+  await Promise.all(writes);
+}
+
+async function ingestBackupFileIfPresent() {
+  const { value, found } = await readJsonFile(DEFAULT_BACKUP_FILE, null);
+  if (!found || !value || typeof value !== 'object') {
+    return null;
+  }
+  const payload = value.data && typeof value.data === 'object' ? value.data : value;
+  if (!hasData(payload)) {
+    return null;
+  }
+  const updatedAt = value.updatedAt || payload?.meta?.updatedAt || new Date().toISOString();
+  const store = { data: payload, updatedAt };
+  await writeStore(store);
+  return store;
+}
+
+async function writeStore(payload) {
+  const updatedAt = payload?.updatedAt || payload?.data?.meta?.updatedAt || new Date().toISOString();
+  await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
+  await fs.writeFile(STORE_PATH, JSON.stringify(payload, null, 2), 'utf-8');
+  const data = payload?.data ?? payload;
+  await writeDataFiles(data, updatedAt);
+  return payload;
+}
 async function isStoreEmpty() {
   const store = await readStore();
   const data = store?.data ?? store;
