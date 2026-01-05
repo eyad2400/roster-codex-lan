@@ -211,10 +211,12 @@
     }
 
     const REMOTE_SAVE_DELAY_MS = 1200;
+    const REMOTE_POLL_INTERVAL_MS = 5000;
     let remoteSaveTimer = null;
     let remoteSaveInFlight = false;
     let remoteSaveQueued = false;
     let remoteLoadAttempted = false;
+    let remotePollTimer = null;
 
     function getApiBaseUrl(){
       const configured = (SETTINGS.apiBaseUrl || '').trim();
@@ -258,7 +260,26 @@
         return false;
       });
     }
-    function applyRemotePayload(data){
+    function getRemoteUpdatedAtFromPayload(payload){
+      return payload?.updatedAt || payload?.data?.meta?.updatedAt || payload?.meta?.updatedAt || null;
+    }
+    function getLocalRemoteUpdatedAt(){
+      return localStorage.getItem('remoteUpdatedAt') || '';
+    }
+    function setLocalRemoteUpdatedAt(value){
+      if(value){
+        localStorage.setItem('remoteUpdatedAt', value);
+      }
+    }
+    function isRemotePayloadNewer(updatedAt, localUpdatedAt){
+      if(!updatedAt) return !localUpdatedAt;
+      if(!localUpdatedAt) return true;
+      const next = Date.parse(updatedAt);
+      const current = Date.parse(localUpdatedAt);
+      if(Number.isNaN(next) || Number.isNaN(current)) return updatedAt !== localUpdatedAt;
+      return next > current;
+    }
+    function applyRemotePayload(data, updatedAt=null){
       const storageMap = {
         officers: 'officers',
         officerLimits: 'officerLimits',
@@ -279,6 +300,10 @@
           localStorage.setItem(storageMap[key], JSON.stringify(data[key]));
         }
       });
+    const nextUpdatedAt = updatedAt || data?.meta?.updatedAt || null;
+      if(nextUpdatedAt){
+        setLocalRemoteUpdatedAt(nextUpdatedAt);
+      }
     }
     function requestRemoteLoad(){
       if(!isRemoteSyncEnabled() || remoteLoadAttempted) return;
@@ -289,13 +314,44 @@
           if(!payload) return;
           const data = payload.data || payload;
           if(!hasRemoteData(data)) return;
-          applyRemotePayload(data);
+          const updatedAt = getRemoteUpdatedAtFromPayload(payload);
+          applyRemotePayload(data, updatedAt);
           loadAll({ skipRemoteLoad: true });
           if(splashCompleted){
             renderTab('roster');
           }
         })
         .catch(err=> console.warn('Remote load failed', err));
+    }
+    async function checkRemoteUpdates(){
+      if(!isRemoteSyncEnabled()) return;
+      if(remoteSaveInFlight || remoteSaveQueued || remoteSaveTimer) return;
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/data`, { headers: { 'Accept': 'application/json' } });
+        if(!res.ok) return;
+        const payload = await res.json();
+        if(!payload) return;
+        const data = payload.data || payload;
+        if(!hasRemoteData(data)) return;
+        const updatedAt = getRemoteUpdatedAtFromPayload(payload);
+        const localUpdatedAt = getLocalRemoteUpdatedAt();
+        if(updatedAt && !isRemotePayloadNewer(updatedAt, localUpdatedAt)) return;
+        applyRemotePayload(data, updatedAt);
+        loadAll({ skipRemoteLoad: true });
+        if(splashCompleted){
+          renderTab('roster');
+        }
+      } catch (err){
+        console.warn('Remote poll failed', err);
+      }
+    }
+    function startRemotePolling(){
+      if(remotePollTimer){
+        clearInterval(remotePollTimer);
+        remotePollTimer = null;
+      }
+      if(!isRemoteSyncEnabled()) return;
+      remotePollTimer = setInterval(checkRemoteUpdates, REMOTE_POLL_INTERVAL_MS);
     }
     function scheduleRemoteSave(){
       if(!isRemoteSyncEnabled()) return;
@@ -318,6 +374,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ data: buildRemotePayload() })
         });
+      setLocalRemoteUpdatedAt(new Date().toISOString());
       } catch (err){
         console.warn('Remote save failed', err);
       } finally {
@@ -441,9 +498,9 @@
 
     /* ========= Helpers ========= */
     function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
-    function csvEscape(v){ if(v==null) return ''; v = String(v); if(v.includes(',') || v.includes('"')) return `"${v.replace(/"/g,'""')}"`; return v; }
+    function csvEscape(v){ if(v==null) return ''; v = String(v); if(v.includes(',') || v.includes('"') || v.includes('\n')) return `"${v.replace(/"/g,'""')}"`; return v; }
     function downloadJSONFile(name,content){ const blob=new Blob([content],{type:'application/json;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.setAttribute('download',name); document.body.appendChild(a); a.click(); a.remove(); }
-    function downloadCSVFile(name,content){ const blob=new Blob([content],{type:'text/csv;charset=utf-8;'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.setAttribute('download',name); document.body.appendChild(a); a.click(); a.remove(); }
+     function downloadCSVFile(name,content){ const blob=new Blob([`\ufeff${content}`],{type:'text/csv;charset=utf-8;'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.setAttribute('download',name); document.body.appendChild(a); a.click(); a.remove(); }
     function normalizeLimit(val){ if(val===0 || val==='' || val==null) return null; return +val; }
     function ensureOfficerLimit(officerId){ if(!officerLimits[officerId]) officerLimits[officerId] = { duties:{}, total:null }; if(!officerLimits[officerId].duties) officerLimits[officerId].duties = {}; }
     function cleanupOfficerLimits(){
@@ -631,7 +688,32 @@
     function canEditRoster(){ const r=currentRole(); return !SETTINGS.authEnabled || r==='admin' || r==='editor'; }
     function isViewerUser(){ return SETTINGS.authEnabled && currentRole()==='viewer'; }
     function isViewOnlyUser(){ return SETTINGS.authEnabled && (currentRole()==='user' || currentRole()==='viewer'); }
-    // Offline fallbacks for missing libs
+    function getDeptDescendantIds(rootIds){
+      const queue = [...new Set(rootIds.filter(Boolean))];
+      const seen = new Set(queue);
+      while(queue.length){
+        const current = queue.shift();
+        departments.filter(d=> (d.parentId || null) === current).forEach(child=>{
+          if(!seen.has(child.id)){
+            seen.add(child.id);
+            queue.push(child.id);
+          }
+        });
+      }
+      return Array.from(seen);
+    }
+    function getViewerScopeOfficerIds(){
+      if(!isViewerUser()) return [];
+      const viewerOfficerId = CURRENT_USER?.officerId;
+      if(!viewerOfficerId) return [];
+      const headDeptIds = departments.filter(d=>d.headId === viewerOfficerId).map(d=>d.id);
+      if(!headDeptIds.length) return [viewerOfficerId];
+      const scopedDeptIds = getDeptDescendantIds(headDeptIds);
+      const officerIds = officers.filter(o=>scopedDeptIds.includes(o.deptId)).map(o=>o.id);
+      if(!officerIds.includes(viewerOfficerId)) officerIds.push(viewerOfficerId);
+      return officerIds;
+    }
+     // Offline fallbacks for missing libs
     // Lightweight html2canvas alternative using SVG foreignObject to avoid external dependencies
     if (typeof window.html2canvas === 'undefined') {
       window.html2canvas = function(element, opts={}){
@@ -1198,7 +1280,10 @@
         const [yy,mm] = month.split('-');
         const days = new Date(Number(yy), Number(mm), 0).getDate();
         const viewerOfficerId = isViewerUser() ? CURRENT_USER?.officerId : null;
-        const viewerDays = viewerOfficerId ? dutyRows.filter(r=>r.officerId===viewerOfficerId).map(r=>r.day).filter(Boolean) : [];
+        const viewerOfficerIds = isViewerUser() ? getViewerScopeOfficerIds() : [];
+        const viewerDays = viewerOfficerIds.length
+          ? dutyRows.filter(r=>viewerOfficerIds.includes(r.officerId)).map(r=>r.day).filter(Boolean)
+          : [];
         const daysToRender = isViewerUser() ? viewerDays : Array.from({length: days}, (_, idx) => idx + 1);
 
         const countsByOfficer = {};
@@ -1279,7 +1364,7 @@
           </div>
           ${rlSummary ? `<div class="mb-2 small-muted">${escapeHtml(rlSummary)}</div>` : ''}
           ${swapControls}
-          ${collapsed ? '<div class="text-muted">القسم مطوي</div>' : `${isViewerUser() && !viewerOfficerId ? '<div class="alert alert-warning">لم يتم ربط حسابك بضابط لعرض الأيام المسندة.</div>' : ''}${isViewerUser() && viewerOfficerId && !rowsHtml ? '<div class="alert alert-info">لا توجد أيام مسندة لك في هذا النوع خلال الشهر.</div>' : `<div class="table-responsive"><table class="table table-bordered table-sm"><thead class="table-dark">${tableHead}</thead><tbody>${rowsHtml || `<tr><td colspan=\"${isViewerUser() ? 6 : 5}\" class=\"text-center text-muted\">لا توجد أيام لعرضها</td></tr>`}</tbody></table></div>`}`}
+           ${collapsed ? '<div class="text-muted">القسم مطوي</div>' : `${isViewerUser() && !viewerOfficerId ? '<div class="alert alert-warning">لم يتم ربط حسابك بضابط لعرض الأيام المسندة.</div>' : ''}${isViewerUser() && viewerOfficerId && !rowsHtml ? '<div class="alert alert-info">لا توجد أيام مسندة في هذا النوع خلال الشهر.</div>' : `<div class="table-responsive"><table class="table table-bordered table-sm"><thead class="table-dark">${tableHead}</thead><tbody>${rowsHtml || `<tr><td colspan=\"${isViewerUser() ? 6 : 5}\" class=\"text-center text-muted\">لا توجد أيام لعرضها</td></tr>`}</tbody></table></div>`}`}
         </div></div>`;
       } catch (err) {
         console.error('renderDutySection error', err);
@@ -2896,6 +2981,14 @@
       const cls = status==='retired'?'status-retired':(status==='transferred'?'status-transferred':'status-active');
       return `<span class="badge-status ${cls}">${label}</span>`;
     }
+     function getStatusLabel(status){
+      return {active:'نشط', retired:'متقاعد', transferred:'منقول'}[status] || status || '';
+    }
+    function getAdmissionLabel(type){
+      if(type === 'transferred') return 'منقول من جهة أخرى';
+      if(type === 'fresh') return 'خريج جديد';
+      return type || '';
+    }
     function renderOfficerDetail(){
       const o = officers.find(x=>x.id===SELECTED_OFFICER_ID) || officers[0];
       if(!o) return '<div class="text-muted">اختر ضابطاً لعرض التفاصيل</div>';
@@ -3110,29 +3203,38 @@
       </div></div>`;
     }
     function saveSubs(id){ const o = officers.find(x=>x.id===id); if(!o) return; o.subs = Array.from(document.getElementById('subs_select').selectedOptions||[]).map(op=>+op.value); saveAll(); renderTab('officers'); }
-       function exportOfficersCSV(){
-      const header = 'id,name,rank,badge,deptId,jobTitleId,phone,gender,birth,address,emgName,emgPhone,status,admissionType,hiringDate,transferFromDeptId,transferToDeptId,transferDate,transferToDate\n';
-      const lines = officers.map(o=>[
-        o.id,o.name,o.rank,o.badge||'',o.deptId||'',o.jobTitleId||'',
-        o.phone||'',o.gender||'',o.birth||'',o.address||'',o.emgName||'',o.emgPhone||'',
-        o.status||'',o.admissionType||'fresh',o.hiringDate||'',o.transferFromDeptId||'',o.transferToDeptId||'',o.transferDate||'',o.transferToDate||''
-      ].map(csvEscape).join(','));
-      downloadCSVFile('officers.csv', header + lines.join('\n'));
-    }
-    function exportOfficersFullCSV(){
-      const header = 'id,name,rank,badge,status,deptId,deptName,jobTitleId,jobTitle,subs,phone,gender,birth,address,emgName,emgPhone,admissionType,hiringDate,transferFromDeptId,transferFromDeptName,transferToDeptId,transferToDeptName,transferDate,transferToDate,transferNote\n';
+      function exportOfficersCSV(){
+      if(!officers.length) return showToast('لا توجد بيانات لتصديرها', 'warning');
+      const header = 'المعرف,الاسم,الرتبة,رقم الأقدمية,القسم,المسمى الوظيفي,الهاتف,النوع,تاريخ الميلاد,العنوان,اسم الطوارئ,هاتف الطوارئ,الحالة,نوع التعيين,تاريخ التعيين,جهة النقل من,جهة النقل إلى,تاريخ النقل للداخل,تاريخ النقل للخارج\n';
       const lines = officers.map(o=>{
         const deptName = o.deptId ? (departments.find(d=>d.id===o.deptId)?.name || '') : '';
         const jobTitle = o.jobTitleId ? (jobTitles.find(j=>j.id===o.jobTitleId)?.name || '') : '';
         const transferFromName = o.transferFromDeptId ? (departments.find(d=>d.id===o.transferFromDeptId)?.name || '') : '';
         const transferToName = o.transferToDeptId ? (departments.find(d=>d.id===o.transferToDeptId)?.name || '') : '';
         return [
-          o.id,o.name,o.rank,o.badge||'',o.status||'',
+          o.id,o.name,o.rank,o.badge||'',deptName,jobTitle,
+          o.phone||'',o.gender||'',o.birth||'',o.address||'',o.emgName||'',o.emgPhone||'',
+          getStatusLabel(o.status||'active'),getAdmissionLabel(o.admissionType||'fresh'),o.hiringDate||'',
+          transferFromName,transferToName,o.transferDate||'',o.transferToDate||''
+        ].map(csvEscape).join(',');
+      });
+      downloadCSVFile('officers.csv', header + lines.join('\n'));
+    }
+    function exportOfficersFullCSV(){
+      if(!officers.length) return showToast('لا توجد بيانات لتصديرها', 'warning');
+      const header = 'المعرف,الاسم,الرتبة,رقم الأقدمية,الحالة,معرف القسم,اسم القسم,معرف المسمى الوظيفي,اسم المسمى الوظيفي,التوابع,الهاتف,النوع,تاريخ الميلاد,العنوان,اسم الطوارئ,هاتف الطوارئ,نوع التعيين,تاريخ التعيين,معرف جهة النقل من,اسم جهة النقل من,معرف جهة النقل إلى,اسم جهة النقل إلى,تاريخ النقل للداخل,تاريخ النقل للخارج,ملاحظة النقل\n';
+      const lines = officers.map(o=>{
+        const deptName = o.deptId ? (departments.find(d=>d.id===o.deptId)?.name || '') : '';
+        const jobTitle = o.jobTitleId ? (jobTitles.find(j=>j.id===o.jobTitleId)?.name || '') : '';
+        const transferFromName = o.transferFromDeptId ? (departments.find(d=>d.id===o.transferFromDeptId)?.name || '') : '';
+        const transferToName = o.transferToDeptId ? (departments.find(d=>d.id===o.transferToDeptId)?.name || '') : '';
+        return [
+          o.id,o.name,o.rank,o.badge||'',getStatusLabel(o.status||'active'),
           o.deptId||'',deptName,
           o.jobTitleId||'',jobTitle,
           (o.subs||[]).join('|'),
           o.phone||'',o.gender||'',o.birth||'',o.address||'',o.emgName||'',o.emgPhone||'',
-          o.admissionType||'fresh',o.hiringDate||'',
+          getAdmissionLabel(o.admissionType||'fresh'),o.hiringDate||'',
           o.transferFromDeptId||'',transferFromName,
           o.transferToDeptId||'',transferToName,
           o.transferDate||'',o.transferToDate||'',
@@ -3141,7 +3243,7 @@
       });
       downloadCSVFile('officers_full.csv', header + lines.join('\n'));
     }
-    function downloadOfficersTemplateCSV(){ downloadCSVFile('officers_template.csv','id,name,rank,badge,deptId,jobTitleId,phone,gender,birth,address,emgName,emgPhone,status,admissionType,hiringDate,transferFromDeptId,transferToDeptId,transferDate,transferToDate'); }
+    function downloadOfficersTemplateCSV(){ downloadCSVFile('officers_template.csv','المعرف,الاسم,الرتبة,رقم الأقدمية,معرف القسم,معرف المسمى الوظيفي,الهاتف,النوع,تاريخ الميلاد,العنوان,اسم الطوارئ,هاتف الطوارئ,الحالة,نوع التعيين,تاريخ التعيين,معرف جهة النقل من,معرف جهة النقل إلى,تاريخ النقل للداخل,تاريخ النقل للخارج'); }
     function importOfficersCSV(input){
       const f = input.files && input.files[0]; if(!f) return;
       const reader = new FileReader(); reader.onload = ()=>{
@@ -3307,10 +3409,10 @@
         </div></div>`;
     }
     function downloadDepartmentsTemplateCSV(){
-      downloadCSVFile('departments_template.csv','id,name,groupKey,parentId,headId,upperTitle,upperOfficerId');
+       downloadCSVFile('departments_template.csv','المعرف,اسم القسم,مفتاح المجموعة,القسم الرئيسي,معرف رئيس القسم,مسمى الإدارة العليا,معرف ضابط الإدارة العليا');
     }
     function downloadTransferDepartmentsTemplateCSV(){
-      downloadCSVFile('transfer_departments_template.csv','name');
+      downloadCSVFile('transfer_departments_template.csv','اسم الجهة');
     }
    function importDepartmentsCSV(input){
       const f = input.files && input.files[0]; if(!f) return;
@@ -4246,6 +4348,7 @@
         remoteLoadAttempted = false;
         requestRemoteLoad();
         scheduleRemoteSave();
+        startRemotePolling();
       }
       document.getElementById('appNameTitle').textContent = SETTINGS.appName;
       document.getElementById('appSubtitle').textContent = SETTINGS.appSubtitle||'';
@@ -4507,4 +4610,6 @@
 
    /* ========= Init ========= */
  loadAll();
+    requestRemoteLoad();
+    startRemotePolling();    
     startSplashProgress();
