@@ -167,17 +167,35 @@
         return fallback;
       }
     }
-    function shouldShowFirstRunPrompt(){
-      if(localStorage.getItem(FIRST_RUN_KEY) === 'true') return false;
-      const keys = ['officers','departments','jobTitles','duties','roster','exceptions','ranks','settings'];
-      const hasAnyStored = keys.some(key => localStorage.getItem(key) !== null);
-      if(!hasAnyStored) return true;
+    function hasStoredRosterData(){
       const storedOfficers = safeLoadFromStorage('officers', []);
       const storedRoster = safeLoadFromStorage('roster', {});
-      const storedSettings = safeLoadFromStorage('settings', {});
-      const storedUsers = Array.isArray(storedSettings.users) ? storedSettings.users : [];
-      const hasRoster = storedRoster && typeof storedRoster === 'object' && Object.keys(storedRoster).length > 0;
-      return !(Array.isArray(storedOfficers) && storedOfficers.length) && !hasRoster && !storedUsers.length;
+       const storedArchivedRoster = safeLoadFromStorage('archivedRoster', {});
+      const storedDepartments = safeLoadFromStorage('departments', []);
+      const storedJobTitles = safeLoadFromStorage('jobTitles', []);
+      const storedDuties = safeLoadFromStorage('duties', []);
+      const storedExceptions = safeLoadFromStorage('exceptions', []);
+      const storedRanks = safeLoadFromStorage('ranks', []);
+      const hasList = list => Array.isArray(list) && list.length > 0;
+      const hasObject = obj => obj && typeof obj === 'object' && Object.keys(obj).length > 0;
+      return (
+        hasList(storedOfficers) ||
+        hasList(storedDepartments) ||
+        hasList(storedJobTitles) ||
+        hasList(storedDuties) ||
+        hasList(storedExceptions) ||
+        hasList(storedRanks) ||
+        hasObject(storedRoster) ||
+        hasObject(storedArchivedRoster)
+      );
+    }
+    function shouldShowFirstRunPrompt(){
+      if(localStorage.getItem(FIRST_RUN_KEY) === 'true') return false;
+      if(SETTINGS.authEnabled){
+        if(!CURRENT_USER) return false;
+        if(CURRENT_USER.role !== 'admin') return false;
+      }
+      return !hasStoredRosterData();
     }
     function completeFirstRunSetup(){
       localStorage.setItem(FIRST_RUN_KEY, 'true');
@@ -193,6 +211,42 @@
           renderTab('roster');
         }
       });
+    }
+    function normalizeAppDataPayload(raw){
+      if(!raw || typeof raw !== 'object') return null;
+      if(raw.data && typeof raw.data === 'object'){
+        return { data: raw.data, updatedAt: raw.updatedAt || raw.data?.meta?.updatedAt || null };
+      }
+      return { data: raw, updatedAt: raw?.meta?.updatedAt || null };
+    }
+    function importAppDataFile(file, options = {}){
+      if(!file) return;
+      const onComplete = typeof options.onComplete === 'function' ? options.onComplete : null;
+      const targetTab = options.targetTab || 'admin';
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const raw = JSON.parse(e.target.result || '{}');
+          const payload = normalizeAppDataPayload(raw);
+          if(!payload || !payload.data) throw new Error('Invalid data payload');
+          applyRemotePayload(payload.data, payload.updatedAt);
+          localStorage.setItem(FIRST_RUN_KEY, 'true');
+          CURRENT_USER = null;
+          loadAll({ skipRemoteLoad: true });
+          saveAll();
+          if(onComplete){
+            onComplete();
+          } else {
+            renderTab(targetTab);
+          }
+          logActivity('استيراد بيانات التطبيق', {file: file?.name || 'upload'});
+          showToast('تم استيراد بيانات التطبيق','success');
+        } catch(err){
+          console.error(err);
+          showToast('تعذر قراءة ملف بيانات التطبيق','danger');
+        }
+      };
+      reader.readAsText(file);
     }
     function getDefaultDuties(){
       return [
@@ -803,6 +857,12 @@
                 <p>قم بتحميل نسخة احتياطية محفوظة مسبقاً لاستعادة جميع الأقسام والضباط والإعدادات.</p>
                 <input type="file" class="form-control" accept="application/json" onchange="handleFirstRunRestore(this.files[0])">
                 <button class="btn btn-outline-primary" onclick="this.previousElementSibling?.click()">اختيار ملف النسخة الاحتياطية</button>
+              </div>
+          <div class="first-run-option">
+                <h4>استيراد بيانات التطبيق (ترحيل خادم)</h4>
+                <p>استخدم ملف بيانات المزامنة (مثل rosterStore.json) عند الترحيل بين الخوادم أو تثبيت نظام جديد.</p>
+                <input type="file" class="form-control" accept="application/json" onchange="importAppDataFile(this.files[0])">
+                <button class="btn btn-outline-secondary" onclick="this.previousElementSibling?.click()">اختيار ملف بيانات التطبيق</button>
               </div>
             </div>
           </div>
