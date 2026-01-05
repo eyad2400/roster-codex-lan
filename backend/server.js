@@ -8,7 +8,7 @@ const app = express();
 /* =========================
    Middleware
    ========================= */
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
@@ -30,7 +30,7 @@ app.get('/health', (req, res) => {
    API routes (add later)
    ========================= */
 // app.use('/api/auth', require('./routes/auth.routes'));
-// app.use('/api/roster', require('./routes/roster.routes'));
+app.use('/api/data', require('./routes/data.routes'));
 
 /* =========================
    Server start
