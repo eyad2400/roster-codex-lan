@@ -126,7 +126,7 @@
       idleLogoutMinutes: 0,
       themeKey: 'classic',
       loginLayout: 'stacked',
-      apiBaseUrl: '',
+     apiBaseUrl: 'http://197.2.0.241:3000',
       apiSyncEnabled: true,
        deptGroups: [
         { key: 'internal', name: 'الإدارة العامة للمساعدات الفنية - ديوان الإدارة' },
@@ -583,7 +583,7 @@ async function forceRemoteUpdate(){
       if(!SETTINGS.tabFontFamily) SETTINGS.tabFontFamily = defaultSettings.tabFontFamily;
       if(!SETTINGS.reportFontFamily) SETTINGS.reportFontFamily = defaultSettings.reportFontFamily;
       if(SETTINGS.apiSyncEnabled === undefined) SETTINGS.apiSyncEnabled = defaultSettings.apiSyncEnabled;
-      if(SETTINGS.apiBaseUrl === undefined) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
+      if(!SETTINGS.apiBaseUrl) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
       try { ACTIVE_SESSIONS = JSON.parse(sessionStorage.getItem('activeSessions')) || []; } catch(_) { ACTIVE_SESSIONS = []; }
       try { CURRENT_USER = JSON.parse(sessionStorage.getItem('currentUser')) || null; if(CURRENT_USER && CURRENT_USER.officerId===undefined) CURRENT_USER.officerId=null; } catch(_) { CURRENT_USER = null; }
       try { supportRequests = JSON.parse(localStorage.getItem('supportRequests')) || []; } catch(_) { supportRequests = []; }
@@ -620,7 +620,7 @@ async function forceRemoteUpdate(){
       autoArchiveOldMonths();
       resetIdleTimer();
       if(SETTINGS.apiSyncEnabled === undefined) SETTINGS.apiSyncEnabled = defaultSettings.apiSyncEnabled;
-      if(SETTINGS.apiBaseUrl === undefined) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
+       if(!SETTINGS.apiBaseUrl) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
     }
 
     function saveAll(options = {}){
