@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { readStore, writeStore, isStoreEmpty, hasData } = require('../services/dataStore');
+const { readStore, writeStore, hasData } = require('../services/dataStore');
 const router = express.Router();
 
 router.get('/', async (req, res) => {
@@ -47,10 +47,6 @@ router.post('/import', async (req, res) => {
     }
     if (!hasData(payload)) {
       return res.status(400).json({ error: 'Backup payload is empty.' });
-    }
-    const empty = await isStoreEmpty();
-    if (!empty) {
-      return res.status(409).json({ error: 'Store already contains data. Clear data before import.' });
     }
     const updatedAt = body.updatedAt || payload?.meta?.updatedAt || new Date().toISOString();
     const store = {
