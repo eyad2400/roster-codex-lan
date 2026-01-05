@@ -122,6 +122,8 @@
       idleLogoutMinutes: 0,
       themeKey: 'classic',
       loginLayout: 'stacked',
+      apiBaseUrl: '',
+      apiSyncEnabled: true,
        deptGroups: [
         { key: 'internal', name: 'الإدارة العامة للمساعدات الفنية - ديوان الإدارة' },
         { key: 'external', name: 'الإدارة العامة للمساعدات الفنية- المناطق الجغرافية' },
@@ -208,7 +210,126 @@
       ];
     }
 
-    function loadAll(){
+    const REMOTE_SAVE_DELAY_MS = 1200;
+    let remoteSaveTimer = null;
+    let remoteSaveInFlight = false;
+    let remoteSaveQueued = false;
+    let remoteLoadAttempted = false;
+
+    function getApiBaseUrl(){
+      const configured = (SETTINGS.apiBaseUrl || '').trim();
+      if(configured) return configured.replace(/\/$/, '');
+      if(window.location.protocol === 'http:' || window.location.protocol === 'https:'){
+        return window.location.origin;
+      }
+      return '';
+    }
+    function isRemoteSyncEnabled(){
+      return !!SETTINGS.apiSyncEnabled && !!getApiBaseUrl();
+    }
+    function buildRemotePayload(){
+      return {
+        officers,
+        officerLimits,
+        departments,
+        jobTitles,
+        duties,
+        roster,
+        archivedRoster,
+        exceptions,
+        ranks,
+        settings: SETTINGS,
+        activityLog,
+        supportRequests,
+        officerLimitFilters,
+        meta: {
+          updatedAt: new Date().toISOString(),
+          updatedBy: CURRENT_USER ? CURRENT_USER.name : 'system'
+        }
+      };
+    }
+    function hasRemoteData(data){
+      if(!data || typeof data !== 'object') return false;
+      const keys = Object.keys(data);
+      return keys.some(key=>{
+        const value = data[key];
+        if(Array.isArray(value)) return value.length > 0;
+        if(value && typeof value === 'object') return Object.keys(value).length > 0;
+        return false;
+      });
+    }
+    function applyRemotePayload(data){
+      const storageMap = {
+        officers: 'officers',
+        officerLimits: 'officerLimits',
+        departments: 'departments',
+        jobTitles: 'jobTitles',
+        duties: 'duties',
+        roster: 'roster',
+        archivedRoster: 'archivedRoster',
+        exceptions: 'exceptions',
+        ranks: 'ranks',
+        settings: 'settings',
+        activityLog: 'activityLog',
+        supportRequests: 'supportRequests',
+        officerLimitFilters: 'officerLimitFilters'
+      };
+      Object.keys(storageMap).forEach(key=>{
+        if(data[key] !== undefined){
+          localStorage.setItem(storageMap[key], JSON.stringify(data[key]));
+        }
+      });
+    }
+    function requestRemoteLoad(){
+      if(!isRemoteSyncEnabled() || remoteLoadAttempted) return;
+      remoteLoadAttempted = true;
+      fetch(`${getApiBaseUrl()}/api/data`, { headers: { 'Accept': 'application/json' } })
+        .then(res => res.ok ? res.json() : null)
+        .then(payload=>{
+          if(!payload) return;
+          const data = payload.data || payload;
+          if(!hasRemoteData(data)) return;
+          applyRemotePayload(data);
+          loadAll({ skipRemoteLoad: true });
+          if(splashCompleted){
+            renderTab('roster');
+          }
+        })
+        .catch(err=> console.warn('Remote load failed', err));
+    }
+    function scheduleRemoteSave(){
+      if(!isRemoteSyncEnabled()) return;
+      if(remoteSaveTimer) clearTimeout(remoteSaveTimer);
+      remoteSaveTimer = setTimeout(()=>{
+        remoteSaveTimer = null;
+        sendRemoteSave();
+      }, REMOTE_SAVE_DELAY_MS);
+    }
+    async function sendRemoteSave(){
+      if(!isRemoteSyncEnabled()) return;
+      if(remoteSaveInFlight){
+        remoteSaveQueued = true;
+        return;
+      }
+      remoteSaveInFlight = true;
+      try {
+        await fetch(`${getApiBaseUrl()}/api/data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: buildRemotePayload() })
+        });
+      } catch (err){
+        console.warn('Remote save failed', err);
+      } finally {
+        remoteSaveInFlight = false;
+        if(remoteSaveQueued){
+          remoteSaveQueued = false;
+          sendRemoteSave();
+        }
+      }
+    }
+
+    function loadAll(options = {}){
       try { officers = JSON.parse(localStorage.getItem('officers')) || []; } catch(_) { officers = []; }
       try { officerLimits = JSON.parse(localStorage.getItem('officerLimits')) || {}; } catch(_) { officerLimits = {}; }
       try { departments = JSON.parse(localStorage.getItem('departments')) || getDefaultDepartments(); } catch(_) { departments = getDefaultDepartments(); }
@@ -245,6 +366,8 @@
       if(!SETTINGS.formFontFamily) SETTINGS.formFontFamily = defaultSettings.formFontFamily;
       if(!SETTINGS.tabFontFamily) SETTINGS.tabFontFamily = defaultSettings.tabFontFamily;
       if(!SETTINGS.reportFontFamily) SETTINGS.reportFontFamily = defaultSettings.reportFontFamily;
+      if(SETTINGS.apiSyncEnabled === undefined) SETTINGS.apiSyncEnabled = defaultSettings.apiSyncEnabled;
+      if(SETTINGS.apiBaseUrl === undefined) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
       try { ACTIVE_SESSIONS = JSON.parse(sessionStorage.getItem('activeSessions')) || []; } catch(_) { ACTIVE_SESSIONS = []; }
       try { CURRENT_USER = JSON.parse(sessionStorage.getItem('currentUser')) || null; if(CURRENT_USER && CURRENT_USER.officerId===undefined) CURRENT_USER.officerId=null; } catch(_) { CURRENT_USER = null; }
       try { supportRequests = JSON.parse(localStorage.getItem('supportRequests')) || []; } catch(_) { supportRequests = []; }
@@ -280,9 +403,11 @@
       cleanupOfficerLimits();
       autoArchiveOldMonths();
       resetIdleTimer();
+      if(SETTINGS.apiSyncEnabled === undefined) SETTINGS.apiSyncEnabled = defaultSettings.apiSyncEnabled;
+      if(SETTINGS.apiBaseUrl === undefined) SETTINGS.apiBaseUrl = defaultSettings.apiBaseUrl;
     }
 
-    function saveAll(){
+    function saveAll(options = {}){
       localStorage.setItem('officers', JSON.stringify(officers));
       localStorage.setItem('officerLimits', JSON.stringify(officerLimits));
       localStorage.setItem('departments', JSON.stringify(departments));
@@ -300,7 +425,10 @@
       localStorage.removeItem('activeSessions');
       sessionStorage.setItem('activeSessions', JSON.stringify(ACTIVE_SESSIONS));
       sessionStorage.setItem('currentUser', JSON.stringify(CURRENT_USER));
-    }
+      if(!options.skipRemote){
+        scheduleRemoteSave();
+      }
+     }
 
 
     let idleTimer = null;
@@ -3996,7 +4124,10 @@
             <div class="col-md-6"><label class="form-label">عنوان ثانوي</label><input id="set_appSubtitle" class="form-control" value="${escapeHtml(SETTINGS.appSubtitle)}"></div>
             <div class="col-md-6"><label class="form-label">تخطيط شاشة الدخول</label><select id="set_loginLayout" class="form-select"><option value="stacked" ${SETTINGS.loginLayout==='stacked'?'selected':''}>مكدس (شعار فوق البطاقة)</option><option value="inline" ${SETTINGS.loginLayout==='inline'?'selected':''}>عرض مضغوط</option></select></div>
             <div class="col-md-6 form-check align-items-center d-flex"><input id="set_auth" class="form-check-input" type="checkbox" ${SETTINGS.authEnabled?'checked':''}><label class="form-check-label ms-2">تمكين نظام المستخدمين</label></div>
-          </div>
+           <div class="col-md-6"><label class="form-label">خادم المزامنة (API)</label><input id="set_apiBaseUrl" class="form-control" placeholder="https://example.com" value="${escapeHtml(SETTINGS.apiBaseUrl || '')}"></div>
+            <div class="col-md-6 form-check align-items-center d-flex"><input id="set_apiSync" class="form-check-input" type="checkbox" ${SETTINGS.apiSyncEnabled?'checked':''}><label class="form-check-label ms-2">تمكين المزامنة عبر الخادم</label></div>
+            <div class="col-12"><div class="form-text text-muted">استخدم نفس النطاق أو اترك الحقل فارغًا لاستخدام نطاق الصفحة الحالية. عند التعطيل سيتم استخدام التخزين المحلي فقط.</div></div>
+           </div>
         `,
         appearance: `
           <div class="row g-2">
@@ -4055,6 +4186,8 @@
       </div></div>`;
     }
     function saveSettingsFromForm(){
+      const previousApiBase = getApiBaseUrl();
+      const previousApiSync = !!SETTINGS.apiSyncEnabled;
       const appName = document.getElementById('set_appName');
       if(appName) SETTINGS.appName = appName.value || SETTINGS.appName;
       const appSubtitle = document.getElementById('set_appSubtitle');
@@ -4069,6 +4202,10 @@
       if(incFooter) SETTINGS.includeFooterOnPrint = !!incFooter.checked;
       const auth = document.getElementById('set_auth');
       if(auth) SETTINGS.authEnabled = !!auth.checked;
+      const apiBaseUrl = document.getElementById('set_apiBaseUrl');
+      if(apiBaseUrl) SETTINGS.apiBaseUrl = apiBaseUrl.value.trim();
+      const apiSyncEnabled = document.getElementById('set_apiSync');
+      if(apiSyncEnabled) SETTINGS.apiSyncEnabled = !!apiSyncEnabled.checked;
       const theme = document.getElementById('set_theme');
       if(theme) SETTINGS.themeKey = theme.value || 'classic';
       const loginLayout = document.getElementById('set_loginLayout');
@@ -4090,7 +4227,7 @@
         ];
       }
       const f = document.getElementById('set_logo')?.files?.[0];
-       if(f){
+      if(f){
         const r = new FileReader();
         r.onload=()=>{
           SETTINGS.logoData = r.result;
@@ -4103,6 +4240,13 @@
         return;
       }
      saveAll();
+      const nextApiBase = getApiBaseUrl();
+      const apiConfigChanged = previousApiBase !== nextApiBase || previousApiSync !== !!SETTINGS.apiSyncEnabled;
+      if(apiConfigChanged){
+        remoteLoadAttempted = false;
+        requestRemoteLoad();
+        scheduleRemoteSave();
+      }
       document.getElementById('appNameTitle').textContent = SETTINGS.appName;
       document.getElementById('appSubtitle').textContent = SETTINGS.appSubtitle||'';
       const footer = document.getElementById('appFooterText');
