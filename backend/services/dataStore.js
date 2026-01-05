@@ -39,9 +39,20 @@ const DEFAULT_DATA = {
   settings: {},
   activityLog: [],
   supportRequests: [],
-  officerLimitFilters: {},
+ officerLimitFilters: {},
 };
+const SNAPSHOT_FILE_PATTERN = /^roster_backup_.+\.json$/i;
 
+function buildSnapshotLabel(fileName) {
+  if (fileName === 'rosterStore.json') {
+    return 'النسخة الحالية على الخادم';
+  }
+  const match = fileName.match(/^roster_backup_(.+)\.json$/i);
+  if (match) {
+    return `نسخة احتياطية ${match[1]}`;
+  }
+  return fileName;
+}
 function hasData(payload) {
   if (!payload || typeof payload !== 'object') {
     return false;
@@ -190,6 +201,71 @@ async function readBackupPayload() {
   return null;
 }
 
+async function listSnapshotSummaries() {
+  let dirents = [];
+  try {
+    dirents = await fs.readdir(DATA_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+  const entries = await Promise.all(
+    dirents
+      .filter((dirent) => dirent.isFile())
+      .map(async (dirent) => {
+        const fileName = dirent.name;
+        if (fileName !== 'rosterStore.json' && !SNAPSHOT_FILE_PATTERN.test(fileName)) {
+          return null;
+        }
+        const filePath = path.join(DATA_DIR, fileName);
+        const { value } = await readJsonFile(filePath, null);
+        if (!value || typeof value !== 'object') {
+          return null;
+        }
+        const data = value.data && typeof value.data === 'object' ? value.data : value;
+        return {
+          id: fileName,
+          label: buildSnapshotLabel(fileName),
+          updatedAt: value.updatedAt || data?.meta?.updatedAt || null,
+          hasData: hasData(data),
+        };
+      })
+  );
+  return entries
+    .filter((entry) => entry && entry.hasData)
+    .sort((a, b) => {
+      const next = Date.parse(b.updatedAt || '') || 0;
+      const current = Date.parse(a.updatedAt || '') || 0;
+      if (next !== current) {
+        return next - current;
+      }
+      return String(a.label).localeCompare(String(b.label), 'ar');
+    });
+}
+
+async function readSnapshotById(snapshotId) {
+  if (!snapshotId || typeof snapshotId !== 'string') {
+    return null;
+  }
+  const snapshots = await listSnapshotSummaries();
+  const target = snapshots.find((entry) => entry.id === snapshotId);
+  if (!target) {
+    return null;
+  }
+  const filePath = path.join(DATA_DIR, snapshotId);
+  const { value } = await readJsonFile(filePath, null);
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const data = value.data && typeof value.data === 'object' ? value.data : value;
+  return {
+    data,
+    updatedAt: value.updatedAt || data?.meta?.updatedAt || null,
+  };
+}
+
 async function ingestBackupFileIfPresent() {
   const value = await readBackupPayload();
   if (!value) {
@@ -236,6 +312,8 @@ module.exports = {
   hasData,
   ensureDataFilesFromStore,
   isStoreEmpty,
+  listSnapshotSummaries,
   readStore,
+  readSnapshotById,
   writeStore,
 };
