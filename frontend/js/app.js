@@ -126,7 +126,7 @@
       idleLogoutMinutes: 0,
       themeKey: 'classic',
       loginLayout: 'stacked',
-     apiBaseUrl: 'http://197.2.0.241:3000',
+      apiBaseUrl: '',
       apiSyncEnabled: true,
        deptGroups: [
         { key: 'internal', name: 'الإدارة العامة للمساعدات الفنية - ديوان الإدارة' },
@@ -170,6 +170,23 @@
       } catch(_) {
         return fallback;
       }
+    }
+    function safeGetStorageValue(storage, key, fallback = null){
+      try {
+        return storage.getItem(key);
+      } catch(_) {
+        return fallback;
+      }
+    }
+    function safeSetStorageValue(storage, key, value){
+      try {
+        storage.setItem(key, value);
+      } catch(_) {}
+    }
+    function safeRemoveStorageValue(storage, key){
+      try {
+        storage.removeItem(key);
+      } catch(_) {}
     }
     function hasStoredRosterData(){
       const storedOfficers = safeLoadFromStorage('officers', []);
@@ -233,7 +250,7 @@
       return true;
     }
     function shouldShowFirstRunPrompt(){
-      if(localStorage.getItem(FIRST_RUN_KEY) === 'true') return false;
+      if(safeGetStorageValue(localStorage, FIRST_RUN_KEY) === 'true') return false;
       if(SETTINGS.authEnabled){
         if(!CURRENT_USER) return false;
         if(CURRENT_USER.role !== 'admin') return false;
@@ -337,6 +354,9 @@
         return window.location.origin;
       }
       return '';
+    }
+     function canUseRemoteApi(){
+      return !!getApiBaseUrl();
     }
     function isRemoteSyncEnabled(){
       return !!SETTINGS.apiSyncEnabled && !!getApiBaseUrl();
@@ -589,7 +609,7 @@
       }
     }
     function requestRemoteLoad(){
-      if(!isRemoteSyncEnabled() || remoteLoadAttempted) return;
+      if(!isRemoteSyncEnabled() || !canUseRemoteApi() || remoteLoadAttempted) return;
       remoteLoadAttempted = true;
       const wasEmpty = !hasStoredRosterData();
       fetch(`${getApiBaseUrl()}/api/data`, { headers: { 'Accept': 'application/json' } })
@@ -611,7 +631,7 @@
         .catch(err=> console.warn('Remote load failed', err));
     }
     async function checkRemoteUpdates(){
-      if(!isRemoteSyncEnabled()) return;
+      if(!isRemoteSyncEnabled() || !canUseRemoteApi()) return;
       if(remoteSaveInFlight || remoteSaveQueued || remoteSaveTimer) return;
       try {
         const res = await fetch(`${getApiBaseUrl()}/api/data`, { headers: { 'Accept': 'application/json' } });
@@ -637,7 +657,7 @@
         clearInterval(remotePollTimer);
         remotePollTimer = null;
       }
-      if(!isRemoteSyncEnabled()) return;
+       if(!isRemoteSyncEnabled() || !canUseRemoteApi()) return;
       remotePollTimer = setInterval(checkRemoteUpdates, REMOTE_POLL_INTERVAL_MS);
     }
     function scheduleRemoteSave(){
@@ -649,7 +669,7 @@
       }, REMOTE_SAVE_DELAY_MS);
     }
     async function sendRemoteSave(){
-      if(!isRemoteSyncEnabled()) return;
+      if(!isRemoteSyncEnabled() || !canUseRemoteApi()) return;
       if(remoteSaveInFlight){
         remoteSaveQueued = true;
         return;
@@ -703,7 +723,7 @@ async function forceRemoteUpdate(){
       if(!Array.isArray(duties)) duties = getDefaultDuties();
       if(!Array.isArray(exceptions)) exceptions = [];
       if(!Array.isArray(activityLog)) activityLog = [];
-	  if(!Array.isArray(ranks) || !ranks.length) ranks = defaultRanks.slice();
+      if(!Array.isArray(ranks) || !ranks.length) ranks = defaultRanks.slice();
       try { Object.assign(officerLimitFilters, JSON.parse(localStorage.getItem('officerLimitFilters')) || {}); } catch(_) {}
       try { SETTINGS = Object.assign(SETTINGS, JSON.parse(localStorage.getItem('settings')) || {}); } catch(_) {}
       if(!Array.isArray(SETTINGS.users)) SETTINGS.users = [];
@@ -751,7 +771,7 @@ async function forceRemoteUpdate(){
           CURRENT_USER.mustChangePassword = !!rec.mustChangePassword;
           CURRENT_USER.fullName = rec.fullName || rec.name || CURRENT_USER.fullName || CURRENT_USER.name || '';
           CURRENT_USER.tabPrivileges = Array.isArray(rec.tabPrivileges) ? rec.tabPrivileges : [];
-          sessionStorage.setItem('currentUser', JSON.stringify(CURRENT_USER));
+           safeSetStorageValue(sessionStorage, 'currentUser', JSON.stringify(CURRENT_USER));
         }
       }
          officers = officers.map(o=>{
@@ -773,23 +793,23 @@ async function forceRemoteUpdate(){
     }
 
     function saveAll(options = {}){
-      localStorage.setItem('officers', JSON.stringify(officers));
-      localStorage.setItem('officerLimits', JSON.stringify(officerLimits));
-      localStorage.setItem('departments', JSON.stringify(departments));
-      localStorage.setItem('jobTitles', JSON.stringify(jobTitles));
-      localStorage.setItem('duties', JSON.stringify(duties));
-      localStorage.setItem('ranks', JSON.stringify(ranks));
-      localStorage.setItem('roster', JSON.stringify(roster));
-      localStorage.setItem('archivedRoster', JSON.stringify(archivedRoster));
-      localStorage.setItem('exceptions', JSON.stringify(exceptions));
-      localStorage.setItem('supportRequests', JSON.stringify(supportRequests));
-      localStorage.setItem('officerLimitFilters', JSON.stringify(officerLimitFilters));
+      safeSetStorageValue(localStorage, 'officers', JSON.stringify(officers));
+      safeSetStorageValue(localStorage, 'officerLimits', JSON.stringify(officerLimits));
+      safeSetStorageValue(localStorage, 'departments', JSON.stringify(departments));
+      safeSetStorageValue(localStorage, 'jobTitles', JSON.stringify(jobTitles));
+      safeSetStorageValue(localStorage, 'duties', JSON.stringify(duties));
+      safeSetStorageValue(localStorage, 'ranks', JSON.stringify(ranks));
+      safeSetStorageValue(localStorage, 'roster', JSON.stringify(roster));
+      safeSetStorageValue(localStorage, 'archivedRoster', JSON.stringify(archivedRoster));
+      safeSetStorageValue(localStorage, 'exceptions', JSON.stringify(exceptions));
+      safeSetStorageValue(localStorage, 'supportRequests', JSON.stringify(supportRequests));
+      safeSetStorageValue(localStorage, 'officerLimitFilters', JSON.stringify(officerLimitFilters));
       activityLog = activityLog.slice(-500);
-      localStorage.setItem('activityLog', JSON.stringify(activityLog));
-      localStorage.setItem('settings', JSON.stringify(SETTINGS));
-      localStorage.removeItem('activeSessions');
-      sessionStorage.setItem('activeSessions', JSON.stringify(ACTIVE_SESSIONS));
-      sessionStorage.setItem('currentUser', JSON.stringify(CURRENT_USER));
+      safeSetStorageValue(localStorage, 'activityLog', JSON.stringify(activityLog));
+      safeSetStorageValue(localStorage, 'settings', JSON.stringify(SETTINGS));
+      safeRemoveStorageValue(localStorage, 'activeSessions');
+      safeSetStorageValue(sessionStorage, 'activeSessions', JSON.stringify(ACTIVE_SESSIONS));
+      safeSetStorageValue(sessionStorage, 'currentUser', JSON.stringify(CURRENT_USER));
       if(!options.skipRemote){
         scheduleRemoteSave();
       }
@@ -1519,14 +1539,17 @@ async function forceRemoteUpdate(){
       const allowed = duties.filter(d => !isOfficerFullyBannedFromDuty(officer, d)).length;
       return allowed || duties.length || 1;
     }
+    function getStoredActiveRosterMonth(){
+      return safeGetStorageValue(sessionStorage, 'activeRosterMonth') || new Date().toISOString().slice(0,7);
+    }
 
     /* ========= Roster Tab ========= */
     function renderRosterTab(){
       if (SETTINGS.authEnabled && !CURRENT_USER) return renderLandingView();
       const viewOnly = isViewOnlyUser();
-      const savedMonth = sessionStorage.getItem('activeRosterMonth') || new Date().toISOString().slice(0,7);
+      const savedMonth = getStoredActiveRosterMonth();
       const activeMonth = viewOnly ? new Date().toISOString().slice(0,7) : savedMonth;
-      if(viewOnly) sessionStorage.setItem('activeRosterMonth', activeMonth);
+      if(viewOnly) safeSetStorageValue(sessionStorage, 'activeRosterMonth', activeMonth);
       sanitizeRosterAgainstExceptions(activeMonth);
       const editControls = canEditRoster() ? `<button class="btn btn-success me-2" onclick="generateAdvancedRoster()">توزيع ذكي</button>
             <button class="btn btn-outline-primary me-2" onclick="saveRosterAndExport()">حفظ وتصدير الجدول (JSON)</button>
@@ -1565,12 +1588,12 @@ async function forceRemoteUpdate(){
     function onRosterMonthChange(){
       if(isViewOnlyUser()) return;
       const m=document.getElementById('rosterMonth').value;
-      if(m) sessionStorage.setItem('activeRosterMonth',m);
+      if(m) safeSetStorageValue(sessionStorage, 'activeRosterMonth', m);
       renderTab('roster');
     }
     function resetRosterForMonth(){
       if(!canEditRoster()) return safeShowToast('ليس لديك صلاحية للتعديل','danger');
-      const month = document.getElementById('rosterMonth')?.value || sessionStorage.getItem('activeRosterMonth');
+      const month = document.getElementById('rosterMonth')?.value || getStoredActiveRosterMonth();
       if(!month) return safeShowToast('اختر الشهر','danger');
       if(!confirm(`سيتم حذف جدول ${month}. متابعة؟`)) return;
       roster[month] = {};
@@ -1584,7 +1607,7 @@ async function forceRemoteUpdate(){
     function toggleSwapBox(id){ dutySwapState[id] = !dutySwapState[id]; renderTab('roster'); }
     function swapDutyDays(dutyId){
       if(!canEditRoster()) return safeShowToast('ليس لديك صلاحية للتعديل','danger');
-      const month = document.getElementById('rosterMonth')?.value || sessionStorage.getItem('activeRosterMonth') || new Date().toISOString().slice(0,7);
+      const month = document.getElementById('rosterMonth')?.value || getStoredActiveRosterMonth();
       const dayA = +document.getElementById(`swap_${dutyId}_a`)?.value;
       const dayB = +document.getElementById(`swap_${dutyId}_b`)?.value;
       if(!dayA || !dayB || dayA===dayB) return safeShowToast('اختر يومين مختلفين للتبديل','warning');
@@ -1608,7 +1631,7 @@ async function forceRemoteUpdate(){
     }
     function swapDutyAssignments(dutyId, dayA, dayB){
       if(!canEditRoster()) return safeShowToast('ليس لديك صلاحية للتعديل','danger');
-      const month = document.getElementById('rosterMonth')?.value || sessionStorage.getItem('activeRosterMonth') || new Date().toISOString().slice(0,7);
+     const month = document.getElementById('rosterMonth')?.value || getStoredActiveRosterMonth();
       roster[month] = roster[month] || {};
       roster[month][dutyId] = roster[month][dutyId] || [];
       const ensureRow = (day)=>{
@@ -1652,7 +1675,7 @@ async function forceRemoteUpdate(){
 
     function renderDutySection(duty){
       try {
-        const month = document.getElementById('rosterMonth')?.value || sessionStorage.getItem('activeRosterMonth') || new Date().toISOString().slice(0,7);
+       const month = document.getElementById('rosterMonth')?.value || getStoredActiveRosterMonth();
         const monthObj = roster[month] || {};
         const dutyRows = monthObj[duty.id] || [];
         const summaryParts = [];
