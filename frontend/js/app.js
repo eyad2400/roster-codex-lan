@@ -697,7 +697,13 @@ async function forceRemoteUpdate(){
       try { exceptions = JSON.parse(localStorage.getItem('exceptions')) || []; } catch(_) { exceptions = []; }
       try { activityLog = JSON.parse(localStorage.getItem('activityLog')) || []; } catch(_) { activityLog = []; }
       try { ranks = JSON.parse(localStorage.getItem('ranks')) || defaultRanks.slice(); } catch(_) { ranks = defaultRanks.slice(); }
-      if(!Array.isArray(ranks) || !ranks.length) ranks = defaultRanks.slice();
+      if(!Array.isArray(officers)) officers = [];
+      if(!Array.isArray(departments)) departments = getDefaultDepartments();
+      if(!Array.isArray(jobTitles)) jobTitles = getDefaultJobTitles();
+      if(!Array.isArray(duties)) duties = getDefaultDuties();
+      if(!Array.isArray(exceptions)) exceptions = [];
+      if(!Array.isArray(activityLog)) activityLog = [];
+	  if(!Array.isArray(ranks) || !ranks.length) ranks = defaultRanks.slice();
       try { Object.assign(officerLimitFilters, JSON.parse(localStorage.getItem('officerLimitFilters')) || {}); } catch(_) {}
       try { SETTINGS = Object.assign(SETTINGS, JSON.parse(localStorage.getItem('settings')) || {}); } catch(_) {}
       if(!Array.isArray(SETTINGS.users)) SETTINGS.users = [];
@@ -728,8 +734,10 @@ async function forceRemoteUpdate(){
       try { ACTIVE_SESSIONS = JSON.parse(sessionStorage.getItem('activeSessions')) || []; } catch(_) { ACTIVE_SESSIONS = []; }
       try { CURRENT_USER = JSON.parse(sessionStorage.getItem('currentUser')) || null; if(CURRENT_USER && CURRENT_USER.officerId===undefined) CURRENT_USER.officerId=null; } catch(_) { CURRENT_USER = null; }
       try { supportRequests = JSON.parse(localStorage.getItem('supportRequests')) || []; } catch(_) { supportRequests = []; }
-      document.getElementById('appNameTitle').textContent = SETTINGS.appName;
-      document.getElementById('appSubtitle').textContent = SETTINGS.appSubtitle || '';
+      const appNameEl = document.getElementById('appNameTitle');
+      if(appNameEl) appNameEl.textContent = SETTINGS.appName;
+      const subtitleEl = document.getElementById('appSubtitle');
+      if(subtitleEl) subtitleEl.textContent = SETTINGS.appSubtitle || '';
       const footer = document.getElementById('appFooterText');
       if(footer){
         const year = new Date().getFullYear();
