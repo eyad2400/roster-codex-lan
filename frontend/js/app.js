@@ -324,7 +324,7 @@
     let remoteSaveQueued = false;
     let remoteLoadAttempted = false;
     let remotePollTimer = null;
-    et remoteSnapshots = [];
+    let remoteSnapshots = [];
     let remoteSnapshotsLoaded = false;
     let remoteSnapshotsLoading = false;
     let remoteSnapshotsError = '';
