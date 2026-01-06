@@ -12,7 +12,7 @@ app.disable('x-powered-by');
    ========================= */
 app.use(express.json({ limit: '10mb' }));
 
-const configuredOrigins = (process.env.CORS_ORIGIN || '')
+const configuredOrigins = (process.env.CORS_ORIGIN || 'http://197.2.0.241:5173,http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -54,8 +54,7 @@ app.get('/vendor/html2canvas.min.js', (req, res) => {
    Server start
    ========================= */
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '197.2.0.241';
-
+const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`RosterCodex backend running on http://${HOST}:${PORT}`);
 });
